@@ -16,6 +16,7 @@ import {
 import { translateError } from '../i18n/translations';
 import { useI18n } from '../i18n/LanguageContext';
 import type { KeyWithSecret } from '../types';
+import { Modal, useModalClose } from './Modal';
 
 export type KeyPasswordMode = 'unlock' | 'add' | 'remove' | 'change';
 
@@ -27,10 +28,27 @@ interface KeyPasswordModalProps {
   onSuccess: (secret?: KeyWithSecret) => void;
 }
 
+export function KeyPasswordModal({ mode, keyId, onClose, onSuccess }: KeyPasswordModalProps) {
+  return (
+    <Modal onClose={onClose}>
+      <KeyPasswordModalContent mode={mode} keyId={keyId} onSuccess={onSuccess} />
+    </Modal>
+  );
+}
+
 const MIN_KEY_PASSWORD_LENGTH = 8;
 
-export function KeyPasswordModal({ mode, keyId, onClose, onSuccess }: KeyPasswordModalProps) {
+function KeyPasswordModalContent({
+  mode,
+  keyId,
+  onSuccess,
+}: {
+  mode: KeyPasswordMode;
+  keyId: string;
+  onSuccess: (secret?: KeyWithSecret) => void;
+}) {
   const { t } = useI18n();
+  const { requestClose, closeThen } = useModalClose();
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -80,22 +98,22 @@ export function KeyPasswordModal({ mode, keyId, onClose, onSuccess }: KeyPasswor
       switch (mode) {
         case 'unlock': {
           const secret = await unlockKeyWithPassword(keyId, currentPassword);
-          onSuccess(secret);
+          closeThen(() => onSuccess(secret));
           return;
         }
         case 'add': {
           await addKeyPassword(keyId, newPassword);
-          onSuccess();
+          closeThen(() => onSuccess());
           return;
         }
         case 'remove': {
           await removeKeyPassword(keyId, currentPassword);
-          onSuccess();
+          closeThen(() => onSuccess());
           return;
         }
         case 'change': {
           await changeKeyPassword(keyId, currentPassword, newPassword);
-          onSuccess();
+          closeThen(() => onSuccess());
           return;
         }
       }
@@ -106,73 +124,71 @@ export function KeyPasswordModal({ mode, keyId, onClose, onSuccess }: KeyPasswor
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <h2 className="modal-title">{title}</h2>
+    <>
+      <h2 className="modal-title">{title}</h2>
 
-        {mode === 'unlock' && <p className="hint-text">{t.keyPasswordRequiredSubtitle}</p>}
+      {mode === 'unlock' && <p className="hint-text">{t.keyPasswordRequiredSubtitle}</p>}
 
-        <form className="auth-form" onSubmit={handleSubmit}>
-          {needsCurrentPassword && (
-            <div className="field">
-              <label htmlFor="current-key-password">
-                {mode === 'unlock' ? t.keyPasswordLabel : t.currentKeyPasswordLabel}
-              </label>
-              <input
-                id="current-key-password"
-                type="password"
-                autoFocus
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                autoComplete="current-password"
-              />
-            </div>
-          )}
-
-          {needsNewPassword && (
-            <>
-              <div className="field">
-                <label htmlFor="new-key-password">{t.newKeyPasswordLabel}</label>
-                <input
-                  id="new-key-password"
-                  type="password"
-                  autoFocus={!needsCurrentPassword}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder={t.extraPasswordFieldPlaceholder}
-                  autoComplete="new-password"
-                />
-                {newPasswordTooShort && (
-                  <p className="hint-text">{t.needMoreChars(MIN_KEY_PASSWORD_LENGTH - newPassword.length)}</p>
-                )}
-              </div>
-
-              <div className="field">
-                <label htmlFor="confirm-key-password">{t.confirmKeyPasswordLabel}</label>
-                <input
-                  id="confirm-key-password"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  autoComplete="new-password"
-                />
-                {mismatch && <p className="error-text">{t.passwordMismatch}</p>}
-              </div>
-            </>
-          )}
-
-          {error && <p className="error-text">{error}</p>}
-
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-            <button type="button" className="btn btn-secondary" onClick={onClose}>
-              {t.cancel}
-            </button>
-            <button type="submit" className="btn btn-primary" disabled={!canSubmit}>
-              {submitLabel}
-            </button>
+      <form className="auth-form" onSubmit={handleSubmit}>
+        {needsCurrentPassword && (
+          <div className="field">
+            <label htmlFor="current-key-password">
+              {mode === 'unlock' ? t.keyPasswordLabel : t.currentKeyPasswordLabel}
+            </label>
+            <input
+              id="current-key-password"
+              type="password"
+              autoFocus
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              autoComplete="current-password"
+            />
           </div>
-        </form>
-      </div>
-    </div>
+        )}
+
+        {needsNewPassword && (
+          <>
+            <div className="field">
+              <label htmlFor="new-key-password">{t.newKeyPasswordLabel}</label>
+              <input
+                id="new-key-password"
+                type="password"
+                autoFocus={!needsCurrentPassword}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder={t.extraPasswordFieldPlaceholder}
+                autoComplete="new-password"
+              />
+              {newPasswordTooShort && (
+                <p className="hint-text">{t.needMoreChars(MIN_KEY_PASSWORD_LENGTH - newPassword.length)}</p>
+              )}
+            </div>
+
+            <div className="field">
+              <label htmlFor="confirm-key-password">{t.confirmKeyPasswordLabel}</label>
+              <input
+                id="confirm-key-password"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+              {mismatch && <p className="error-text">{t.passwordMismatch}</p>}
+            </div>
+          </>
+        )}
+
+        {error && <p className="error-text">{error}</p>}
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+          <button type="button" className="btn btn-secondary" onClick={requestClose}>
+            {t.cancel}
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={!canSubmit}>
+            {submitLabel}
+          </button>
+        </div>
+      </form>
+    </>
   );
 }
