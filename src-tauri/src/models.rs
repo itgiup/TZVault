@@ -46,6 +46,10 @@ pub struct KeySummary {
     pub notes: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// true nếu key này được bảo vệ thêm 1 lớp mật khẩu riêng (ngoài
+    /// master password chung) — frontend dùng để hiện icon khóa và yêu
+    /// cầu nhập mật khẩu riêng trước khi cho xem nội dung.
+    pub has_extra_password: bool,
 }
 
 /// Dữ liệu đầy đủ (đã giải mã) trả về khi người dùng bấm "Show"/"Copy".
@@ -68,6 +72,10 @@ pub struct NewKeyInput {
     pub secret_value: String,
     pub tags: Vec<String>,
     pub notes: Option<String>,
+    /// Nếu Some, key này sẽ được mã hóa thêm 1 lớp bằng mật khẩu riêng
+    /// (ngoài lớp Vault Key thông thường). None = key bình thường,
+    /// chỉ cần master password chung để xem.
+    pub extra_password: Option<String>,
 }
 
 /// Bản ghi thô lấy từ DB (dữ liệu vẫn đang mã hóa).
@@ -81,4 +89,11 @@ pub struct StoredKeyRow {
     pub notes: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub has_extra_password: bool,
+    /// Salt dùng để derive key phụ từ mật khẩu riêng (Argon2id).
+    /// Chỉ có giá trị khi has_extra_password = true.
+    pub extra_salt: Option<Vec<u8>>,
+    /// Nonce của lớp mã hóa TRONG (bằng key phụ) — khác với `nonce` ở
+    /// trên vốn là nonce của lớp mã hóa NGOÀI (bằng Vault Key).
+    pub extra_nonce: Option<Vec<u8>>,
 }

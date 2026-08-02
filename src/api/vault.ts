@@ -50,6 +50,26 @@ export async function deleteKey(id: string): Promise<void> {
   return invoke('cmd_delete_key', { id });
 }
 
+export async function unlockKeyWithPassword(id: string, keyPassword: string): Promise<KeyWithSecret> {
+  return invoke('cmd_unlock_key_with_password', { id, keyPassword });
+}
+
+export async function addKeyPassword(id: string, newKeyPassword: string): Promise<void> {
+  return invoke('cmd_add_key_password', { id, newKeyPassword });
+}
+
+export async function removeKeyPassword(id: string, currentKeyPassword: string): Promise<void> {
+  return invoke('cmd_remove_key_password', { id, currentKeyPassword });
+}
+
+export async function changeKeyPassword(
+  id: string,
+  currentKeyPassword: string,
+  newKeyPassword: string
+): Promise<void> {
+  return invoke('cmd_change_key_password', { id, currentKeyPassword, newKeyPassword });
+}
+
 /// Rút gọn lỗi trả về từ Rust (thường đã là string dễ đọc) thành message
 /// hiển thị được cho người dùng, phòng trường hợp lỗi là object khác.
 export function toErrorMessage(err: unknown): string {

@@ -431,6 +431,11 @@ textarea {
   color: var(--brass);
 }
 
+.protected-badge {
+  background: var(--danger-glow);
+  color: var(--danger);
+}
+
 .vault-detail-pane {
   flex: 1;
   overflow-y: auto;

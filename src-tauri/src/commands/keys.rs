@@ -14,7 +14,15 @@ fn now_ts() -> i64 {
         .as_secs() as i64
 }
 
+fn row_to_nonce(bytes: &[u8]) -> Result<[u8; crypto::cipher::NONCE_LEN], String> {
+    bytes
+        .try_into()
+        .map_err(|_| crate::error::internal_error_msg("nonce_length_mismatch"))
+}
+
 /// Thêm 1 private key mới vào vault. Trả về id vừa tạo.
+/// Nếu `input.extra_password` có giá trị, key được mã hóa thêm 1 lớp
+/// bằng mật khẩu riêng (xem crypto::encrypt_key_value_with_extra_password).
 #[tauri::command]
 pub fn cmd_add_key(
     input: NewKeyInput,
@@ -32,22 +40,50 @@ pub fn cmd_add_key(
     }
 
     let id = Uuid::new_v4().to_string();
-
-    let encrypted = crypto::encrypt_key_value(&vault_key, &id, &input.secret_value)?;
-
-    let tags_json = serde_json::to_string(&input.tags).map_err(|e| e.to_string())?;
+    let tags_json = serde_json::to_string(&input.tags).map_err(|e| crate::error::internal_error("encode_tags", e))?;
     let ts = now_ts();
 
-    let row = StoredKeyRow {
-        id: id.clone(),
-        name: input.name,
-        key_type: input.key_type,
-        ciphertext: encrypted.ciphertext,
-        nonce: encrypted.nonce.to_vec(),
-        tags: tags_json,
-        notes: input.notes,
-        created_at: ts,
-        updated_at: ts,
+    let row = match &input.extra_password {
+        Some(extra_password) if !extra_password.is_empty() => {
+            let (outer, extra_salt, extra_nonce) = crypto::encrypt_key_value_with_extra_password(
+                &vault_key,
+                &id,
+                &input.secret_value,
+                extra_password,
+            )?;
+
+            StoredKeyRow {
+                id: id.clone(),
+                name: input.name,
+                key_type: input.key_type,
+                ciphertext: outer.ciphertext,
+                nonce: outer.nonce.to_vec(),
+                tags: tags_json,
+                notes: input.notes,
+                created_at: ts,
+                updated_at: ts,
+                has_extra_password: true,
+                extra_salt: Some(extra_salt.to_vec()),
+                extra_nonce: Some(extra_nonce.to_vec()),
+            }
+        }
+        _ => {
+            let encrypted = crypto::encrypt_key_value(&vault_key, &id, &input.secret_value)?;
+            StoredKeyRow {
+                id: id.clone(),
+                name: input.name,
+                key_type: input.key_type,
+                ciphertext: encrypted.ciphertext,
+                nonce: encrypted.nonce.to_vec(),
+                tags: tags_json,
+                notes: input.notes,
+                created_at: ts,
+                updated_at: ts,
+                has_extra_password: false,
+                extra_salt: None,
+                extra_nonce: None,
+            }
+        }
     };
 
     db.insert_key(&row)?;
@@ -69,8 +105,9 @@ pub fn cmd_list_keys(
     db.list_key_summaries()
 }
 
-/// Lấy giá trị thật của 1 key — chỉ gọi khi người dùng chủ động bấm
-/// "Show" hoặc "Copy". Ghi audit log mỗi lần gọi.
+/// Lấy giá trị thật của 1 key — chỉ dùng cho key KHÔNG có mật khẩu riêng.
+/// Nếu key có `has_extra_password = true`, trả về ERR_EXTRA_PASSWORD_REQUIRED
+/// để frontend biết cần hỏi thêm mật khẩu riêng rồi gọi cmd_unlock_key_with_password.
 #[tauri::command]
 pub fn cmd_get_key_secret(
     id: String,
@@ -82,14 +119,12 @@ pub fn cmd_get_key_secret(
 
     let row = db.get_key_row(&id)?;
 
-    let nonce: [u8; crypto::cipher::NONCE_LEN] = row
-        .nonce
-        .clone()
-        .try_into()
-        .map_err(|_| crate::error::internal_error_msg("nonce_length_mismatch"))?;
+    if row.has_extra_password {
+        return Err("ERR_EXTRA_PASSWORD_REQUIRED".to_string());
+    }
 
+    let nonce = row_to_nonce(&row.nonce)?;
     let secret = crypto::decrypt_key_value(&vault_key, &row.id, &row.ciphertext, &nonce)?;
-
     let tags: Vec<String> = serde_json::from_str(&row.tags).unwrap_or_default();
 
     db.log_action("view_key", Some(&id), now_ts())?;
@@ -102,6 +137,201 @@ pub fn cmd_get_key_secret(
         tags,
         notes: row.notes,
     })
+}
+
+/// Mở 1 key CÓ mật khẩu riêng — cần cả vault đang unlock (master password)
+/// VÀ đúng mật khẩu riêng của key này.
+#[tauri::command]
+pub fn cmd_unlock_key_with_password(
+    id: String,
+    key_password: String,
+    storage: State<StorageState>,
+    vault_state: State<VaultState>,
+) -> Result<KeyWithSecret, String> {
+    let vault_key = vault_state.get_vault_key()?;
+    let db = storage.0.lock().map_err(|_| crate::error::internal_error_msg("storage_mutex_lock"))?;
+
+    let row = db.get_key_row(&id)?;
+
+    if !row.has_extra_password {
+        // Không nên xảy ra qua luồng UI bình thường (UI chỉ gọi command
+        // này khi đã biết has_extra_password = true) -> coi là lỗi hệ thống.
+        return Err(crate::error::internal_error_msg("unlock_key_password_on_unprotected_key"));
+    }
+
+    let extra_salt = row.extra_salt.as_deref().ok_or_else(|| {
+        crate::error::internal_error_msg("missing_extra_salt_for_protected_key")
+    })?;
+    let extra_nonce_bytes = row.extra_nonce.as_deref().ok_or_else(|| {
+        crate::error::internal_error_msg("missing_extra_nonce_for_protected_key")
+    })?;
+    let extra_nonce = row_to_nonce(extra_nonce_bytes)?;
+    let nonce = row_to_nonce(&row.nonce)?;
+
+    let secret = crypto::decrypt_key_value_with_extra_password(
+        &vault_key,
+        &row.id,
+        &row.ciphertext,
+        &nonce,
+        extra_salt,
+        &extra_nonce,
+        &key_password,
+    )?;
+
+    let tags: Vec<String> = serde_json::from_str(&row.tags).unwrap_or_default();
+
+    db.log_action("view_key_extra_password", Some(&id), now_ts())?;
+
+    Ok(KeyWithSecret {
+        id: row.id,
+        name: row.name,
+        key_type: row.key_type,
+        secret_value: secret,
+        tags,
+        notes: row.notes,
+    })
+}
+
+/// Thêm mật khẩu riêng cho 1 key HIỆN CHƯA có mật khẩu riêng.
+/// Cần vault đang unlock để đọc được nội dung hiện tại trước khi mã hóa lại.
+#[tauri::command]
+pub fn cmd_add_key_password(
+    id: String,
+    new_key_password: String,
+    storage: State<StorageState>,
+    vault_state: State<VaultState>,
+) -> Result<(), String> {
+    if new_key_password.len() < 8 {
+        return Err("ERR_KEY_PASSWORD_TOO_SHORT".to_string());
+    }
+
+    let vault_key = vault_state.get_vault_key()?;
+    let db = storage.0.lock().map_err(|_| crate::error::internal_error_msg("storage_mutex_lock"))?;
+
+    let row = db.get_key_row(&id)?;
+    if row.has_extra_password {
+        return Err("ERR_KEY_ALREADY_PROTECTED".to_string());
+    }
+
+    let nonce = row_to_nonce(&row.nonce)?;
+    let plaintext = crypto::decrypt_key_value(&vault_key, &row.id, &row.ciphertext, &nonce)?;
+
+    let (outer, extra_salt, extra_nonce) =
+        crypto::encrypt_key_value_with_extra_password(&vault_key, &row.id, &plaintext, &new_key_password)?;
+
+    db.update_key_encryption(
+        &id,
+        &outer.ciphertext,
+        &outer.nonce,
+        true,
+        Some(&extra_salt),
+        Some(&extra_nonce),
+        now_ts(),
+    )?;
+    db.log_action("add_key_password", Some(&id), now_ts())?;
+
+    Ok(())
+}
+
+/// Gỡ mật khẩu riêng khỏi 1 key — cần đúng mật khẩu riêng hiện tại.
+#[tauri::command]
+pub fn cmd_remove_key_password(
+    id: String,
+    current_key_password: String,
+    storage: State<StorageState>,
+    vault_state: State<VaultState>,
+) -> Result<(), String> {
+    let vault_key = vault_state.get_vault_key()?;
+    let db = storage.0.lock().map_err(|_| crate::error::internal_error_msg("storage_mutex_lock"))?;
+
+    let row = db.get_key_row(&id)?;
+    if !row.has_extra_password {
+        return Err(crate::error::internal_error_msg("remove_password_on_unprotected_key"));
+    }
+
+    let extra_salt = row.extra_salt.as_deref().ok_or_else(|| {
+        crate::error::internal_error_msg("missing_extra_salt_for_protected_key")
+    })?;
+    let extra_nonce_bytes = row.extra_nonce.as_deref().ok_or_else(|| {
+        crate::error::internal_error_msg("missing_extra_nonce_for_protected_key")
+    })?;
+    let extra_nonce = row_to_nonce(extra_nonce_bytes)?;
+    let nonce = row_to_nonce(&row.nonce)?;
+
+    let plaintext = crypto::decrypt_key_value_with_extra_password(
+        &vault_key,
+        &row.id,
+        &row.ciphertext,
+        &nonce,
+        extra_salt,
+        &extra_nonce,
+        &current_key_password,
+    )?;
+
+    // Mã hóa lại theo kiểu bình thường (chỉ 1 lớp Vault Key, bỏ lớp mật khẩu riêng)
+    let encrypted = crypto::encrypt_key_value(&vault_key, &row.id, &plaintext)?;
+
+    db.update_key_encryption(&id, &encrypted.ciphertext, &encrypted.nonce, false, None, None, now_ts())?;
+    db.log_action("remove_key_password", Some(&id), now_ts())?;
+
+    Ok(())
+}
+
+/// Đổi mật khẩu riêng của 1 key — cần đúng mật khẩu riêng hiện tại.
+#[tauri::command]
+pub fn cmd_change_key_password(
+    id: String,
+    current_key_password: String,
+    new_key_password: String,
+    storage: State<StorageState>,
+    vault_state: State<VaultState>,
+) -> Result<(), String> {
+    if new_key_password.len() < 8 {
+        return Err("ERR_KEY_PASSWORD_TOO_SHORT".to_string());
+    }
+
+    let vault_key = vault_state.get_vault_key()?;
+    let db = storage.0.lock().map_err(|_| crate::error::internal_error_msg("storage_mutex_lock"))?;
+
+    let row = db.get_key_row(&id)?;
+    if !row.has_extra_password {
+        return Err(crate::error::internal_error_msg("change_password_on_unprotected_key"));
+    }
+
+    let extra_salt = row.extra_salt.as_deref().ok_or_else(|| {
+        crate::error::internal_error_msg("missing_extra_salt_for_protected_key")
+    })?;
+    let extra_nonce_bytes = row.extra_nonce.as_deref().ok_or_else(|| {
+        crate::error::internal_error_msg("missing_extra_nonce_for_protected_key")
+    })?;
+    let extra_nonce = row_to_nonce(extra_nonce_bytes)?;
+    let nonce = row_to_nonce(&row.nonce)?;
+
+    let plaintext = crypto::decrypt_key_value_with_extra_password(
+        &vault_key,
+        &row.id,
+        &row.ciphertext,
+        &nonce,
+        extra_salt,
+        &extra_nonce,
+        &current_key_password,
+    )?;
+
+    let (outer, new_extra_salt, new_extra_nonce) =
+        crypto::encrypt_key_value_with_extra_password(&vault_key, &row.id, &plaintext, &new_key_password)?;
+
+    db.update_key_encryption(
+        &id,
+        &outer.ciphertext,
+        &outer.nonce,
+        true,
+        Some(&new_extra_salt),
+        Some(&new_extra_nonce),
+        now_ts(),
+    )?;
+    db.log_action("change_key_password", Some(&id), now_ts())?;
+
+    Ok(())
 }
 
 #[tauri::command]

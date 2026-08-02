@@ -20,10 +20,17 @@ export function AddKeyModal({ onClose, onAdded }: AddKeyModalProps) {
   const [secretValue, setSecretValue] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const [notes, setNotes] = useState('');
+  const [wantsExtraPassword, setWantsExtraPassword] = useState(false);
+  const [extraPassword, setExtraPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorCode, setErrorCode] = useState<unknown>(null);
 
-  const canSubmit = name.trim().length > 0 && secretValue.length > 0 && !submitting;
+  const extraPasswordTooShort = wantsExtraPassword && extraPassword.length > 0 && extraPassword.length < 8;
+  const canSubmit =
+    name.trim().length > 0 &&
+    secretValue.length > 0 &&
+    (!wantsExtraPassword || extraPassword.length >= 8) &&
+    !submitting;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,6 +51,7 @@ export function AddKeyModal({ onClose, onAdded }: AddKeyModalProps) {
         secret_value: secretValue,
         tags,
         notes: notes.trim() || null,
+        extra_password: wantsExtraPassword ? extraPassword : null,
       });
       onAdded();
     } catch (err) {
@@ -112,6 +120,47 @@ export function AddKeyModal({ onClose, onAdded }: AddKeyModalProps) {
               placeholder={t.notesOptionalPlaceholder}
             />
           </div>
+
+          <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+
+          <label
+            style={{
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center',
+              fontSize: 13,
+              color: 'var(--text)',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={wantsExtraPassword}
+              onChange={(e) => {
+                setWantsExtraPassword(e.target.checked);
+                if (!e.target.checked) setExtraPassword('');
+              }}
+              style={{ width: 'auto' }}
+            />
+            {t.extraPasswordCheckbox}
+          </label>
+
+          {wantsExtraPassword && (
+            <div className="field">
+              <label htmlFor="extra-password">{t.extraPasswordFieldLabel}</label>
+              <input
+                id="extra-password"
+                type="password"
+                value={extraPassword}
+                onChange={(e) => setExtraPassword(e.target.value)}
+                placeholder={t.extraPasswordFieldPlaceholder}
+                autoComplete="new-password"
+              />
+              {extraPasswordTooShort && (
+                <p className="hint-text">{t.needMoreChars(8 - extraPassword.length)}</p>
+              )}
+            </div>
+          )}
 
           {error && <p className="error-text">{error}</p>}
 

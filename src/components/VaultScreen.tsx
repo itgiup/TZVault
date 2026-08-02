@@ -134,7 +134,14 @@ export function VaultScreen({ onLocked, theme, onToggleTheme }: VaultScreenProps
                 tabIndex={0}
                 onKeyDown={(e) => e.key === 'Enter' && setSelectedId(key.id)}
               >
-                <span className="vault-list-item-name">{key.name}</span>
+                <span className="vault-list-item-name">
+                  {key.name}
+                  {key.has_extra_password && (
+                    <span title={t.protectedBadge} style={{ marginLeft: 6, fontSize: 12 }}>
+                      🔒
+                    </span>
+                  )}
+                </span>
                 <div className="vault-list-item-meta">
                   <span className="type-badge">{keyTypeLabels[key.key_type]}</span>
                   {key.tags.length > 0 && <span>{key.tags.join(', ')}</span>}
@@ -158,6 +165,7 @@ export function VaultScreen({ onLocked, theme, onToggleTheme }: VaultScreenProps
                   setSelectedId(null);
                   refresh();
                 }}
+                onUpdated={refresh}
               />
             </>
           ) : (

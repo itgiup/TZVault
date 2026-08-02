@@ -54,7 +54,10 @@ impl Storage {
                     tags TEXT NOT NULL DEFAULT '[]',
                     notes TEXT,
                     created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
+                    updated_at INTEGER NOT NULL,
+                    has_extra_password INTEGER NOT NULL DEFAULT 0,
+                    extra_salt BLOB,
+                    extra_nonce BLOB
                 );
 
                 CREATE TABLE IF NOT EXISTS audit_log (
@@ -65,7 +68,28 @@ impl Storage {
                 );
                 "#,
             )
-            .map_err(|e| crate::error::internal_error("db_init_schema", e))
+            .map_err(|e| crate::error::internal_error("db_init_schema", e))?;
+
+        self.migrate_add_extra_password_columns();
+        Ok(())
+    }
+
+    /// Migration cho DB đã tồn tại từ trước khi có tính năng "mật khẩu
+    /// riêng cho từng key" — `CREATE TABLE IF NOT EXISTS` ở trên không tự
+    /// thêm cột mới vào bảng đã có sẵn, nên cần ALTER TABLE riêng.
+    /// Bỏ qua lỗi "duplicate column" một cách an toàn (nghĩa là DB đã có
+    /// cột đó rồi, không cần làm gì thêm).
+    fn migrate_add_extra_password_columns(&self) {
+        let statements = [
+            "ALTER TABLE stored_keys ADD COLUMN has_extra_password INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE stored_keys ADD COLUMN extra_salt BLOB",
+            "ALTER TABLE stored_keys ADD COLUMN extra_nonce BLOB",
+        ];
+        for stmt in statements {
+            // Lỗi ở đây (nếu có) luôn là "duplicate column name" vì cột
+            // đã tồn tại -> an toàn để bỏ qua, không cần log.
+            let _ = self.conn.execute(stmt, []);
+        }
     }
 
     // ---------- vault_meta ----------
@@ -118,11 +142,14 @@ impl Storage {
     pub fn insert_key(&self, row: &StoredKeyRow) -> Result<(), String> {
         self.conn
             .execute(
-                "INSERT INTO stored_keys (id, name, key_type, ciphertext, nonce, tags, notes, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO stored_keys
+                 (id, name, key_type, ciphertext, nonce, tags, notes, created_at, updated_at,
+                  has_extra_password, extra_salt, extra_nonce)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     row.id, row.name, row.key_type, row.ciphertext, row.nonce,
-                    row.tags, row.notes, row.created_at, row.updated_at
+                    row.tags, row.notes, row.created_at, row.updated_at,
+                    row.has_extra_password, row.extra_salt, row.extra_nonce
                 ],
             )
             .map_err(|e| crate::error::internal_error("db_insert_key", e))?;
@@ -132,7 +159,8 @@ impl Storage {
     pub fn get_key_row(&self, id: &str) -> Result<StoredKeyRow, String> {
         self.conn
             .query_row(
-                "SELECT id, name, key_type, ciphertext, nonce, tags, notes, created_at, updated_at
+                "SELECT id, name, key_type, ciphertext, nonce, tags, notes, created_at, updated_at,
+                        has_extra_password, extra_salt, extra_nonce
                  FROM stored_keys WHERE id = ?1",
                 params![id],
                 |row| {
@@ -146,10 +174,43 @@ impl Storage {
                         notes: row.get(6)?,
                         created_at: row.get(7)?,
                         updated_at: row.get(8)?,
+                        has_extra_password: row.get(9)?,
+                        extra_salt: row.get(10)?,
+                        extra_nonce: row.get(11)?,
                     })
                 },
             )
             .map_err(|e| crate::error::internal_error("db_get_key", e))
+    }
+
+    /// Cập nhật lại phần mã hóa của 1 key (dùng khi thêm/gỡ/đổi mật khẩu
+    /// riêng — nội dung được giải mã rồi mã hóa lại theo lớp mới, các
+    /// trường khác như tên/tags/notes giữ nguyên).
+    pub fn update_key_encryption(
+        &self,
+        id: &str,
+        ciphertext: &[u8],
+        nonce: &[u8],
+        has_extra_password: bool,
+        extra_salt: Option<&[u8]>,
+        extra_nonce: Option<&[u8]>,
+        updated_at: i64,
+    ) -> Result<(), String> {
+        let affected = self
+            .conn
+            .execute(
+                "UPDATE stored_keys
+                 SET ciphertext = ?1, nonce = ?2, has_extra_password = ?3,
+                     extra_salt = ?4, extra_nonce = ?5, updated_at = ?6
+                 WHERE id = ?7",
+                params![ciphertext, nonce, has_extra_password, extra_salt, extra_nonce, updated_at, id],
+            )
+            .map_err(|e| crate::error::internal_error("db_update_key_encryption", e))?;
+
+        if affected == 0 {
+            return Err("ERR_KEY_NOT_FOUND".to_string());
+        }
+        Ok(())
     }
 
     /// Danh sách rút gọn — KHÔNG lấy ciphertext, tránh giữ dữ liệu mã hóa
@@ -157,7 +218,10 @@ impl Storage {
     pub fn list_key_summaries(&self) -> Result<Vec<KeySummary>, String> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, name, key_type, tags, notes, created_at, updated_at FROM stored_keys ORDER BY updated_at DESC")
+            .prepare(
+                "SELECT id, name, key_type, tags, notes, created_at, updated_at, has_extra_password
+                 FROM stored_keys ORDER BY updated_at DESC",
+            )
             .map_err(|e| crate::error::internal_error("db_prepare_query", e))?;
 
         let rows = stmt
@@ -172,6 +236,7 @@ impl Storage {
                     notes: row.get(4)?,
                     created_at: row.get(5)?,
                     updated_at: row.get(6)?,
+                    has_extra_password: row.get(7)?,
                 })
             })
             .map_err(|e| crate::error::internal_error("db_query_map", e))?;
@@ -219,6 +284,18 @@ mod tests {
             notes: Some("ghi chu".to_string()),
             created_at: 1000,
             updated_at: 1000,
+            has_extra_password: false,
+            extra_salt: None,
+            extra_nonce: None,
+        }
+    }
+
+    fn sample_row_with_extra_password(id: &str) -> StoredKeyRow {
+        StoredKeyRow {
+            has_extra_password: true,
+            extra_salt: Some(vec![9, 9, 9]),
+            extra_nonce: Some(vec![8, 8, 8]),
+            ..sample_row(id)
         }
     }
 
@@ -238,6 +315,72 @@ mod tests {
         assert_eq!(evk, b"enc_vault_key");
         assert_eq!(nonce, b"nonce123");
         assert_eq!(params, "{}");
+    }
+
+    #[test]
+    fn insert_and_get_key_with_extra_password() {
+        let storage = Storage::open_in_memory().unwrap();
+        let row = sample_row_with_extra_password("key-extra");
+        storage.insert_key(&row).unwrap();
+
+        let fetched = storage.get_key_row("key-extra").unwrap();
+        assert!(fetched.has_extra_password);
+        assert_eq!(fetched.extra_salt, Some(vec![9, 9, 9]));
+        assert_eq!(fetched.extra_nonce, Some(vec![8, 8, 8]));
+    }
+
+    #[test]
+    fn list_summaries_reports_has_extra_password_correctly() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage.insert_key(&sample_row("key-normal")).unwrap();
+        storage.insert_key(&sample_row_with_extra_password("key-extra")).unwrap();
+
+        let summaries = storage.list_key_summaries().unwrap();
+        let normal = summaries.iter().find(|k| k.id == "key-normal").unwrap();
+        let extra = summaries.iter().find(|k| k.id == "key-extra").unwrap();
+
+        assert!(!normal.has_extra_password);
+        assert!(extra.has_extra_password);
+    }
+
+    #[test]
+    fn update_key_encryption_adds_extra_password() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage.insert_key(&sample_row("key-1")).unwrap();
+
+        storage
+            .update_key_encryption("key-1", &[10, 11, 12], &[13, 14], true, Some(&[1, 2]), Some(&[3, 4]), 2000)
+            .unwrap();
+
+        let fetched = storage.get_key_row("key-1").unwrap();
+        assert!(fetched.has_extra_password);
+        assert_eq!(fetched.ciphertext, vec![10, 11, 12]);
+        assert_eq!(fetched.extra_salt, Some(vec![1, 2]));
+        assert_eq!(fetched.updated_at, 2000);
+        // Các trường không liên quan (name, tags) phải giữ nguyên
+        assert_eq!(fetched.name, "Test Key");
+    }
+
+    #[test]
+    fn update_key_encryption_removes_extra_password() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage.insert_key(&sample_row_with_extra_password("key-1")).unwrap();
+
+        storage
+            .update_key_encryption("key-1", &[20, 21], &[22, 23], false, None, None, 3000)
+            .unwrap();
+
+        let fetched = storage.get_key_row("key-1").unwrap();
+        assert!(!fetched.has_extra_password);
+        assert_eq!(fetched.extra_salt, None);
+        assert_eq!(fetched.extra_nonce, None);
+    }
+
+    #[test]
+    fn update_key_encryption_nonexistent_key_errors() {
+        let storage = Storage::open_in_memory().unwrap();
+        let result = storage.update_key_encryption("khong-ton-tai", &[1], &[2], false, None, None, 1000);
+        assert_eq!(result, Err("ERR_KEY_NOT_FOUND".to_string()));
     }
 
     #[test]

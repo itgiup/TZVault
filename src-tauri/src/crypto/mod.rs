@@ -125,6 +125,67 @@ pub fn decrypt_key_value(
     String::from_utf8(bytes).map_err(|e| crate::error::internal_error("decrypted_data_not_utf8", e))
 }
 
+// ============================================================
+// MẬT KHẨU RIÊNG CHO TỪNG KEY — mã hóa 2 lớp
+//
+//   plaintext
+//     → mã hóa bằng Key Password riêng (Argon2id → AES-256-GCM)  [lớp TRONG]
+//     → ciphertext_inner
+//         → mã hóa bằng Vault Key như bình thường                [lớp NGOÀI]
+//         → lưu vào DB (cột ciphertext/nonce như các key khác)
+//
+// Mở khóa vault (master password) chỉ giải mã được lớp NGOÀI.
+// Phải nhập thêm Key Password riêng mới giải mã được lớp TRONG để đọc
+// nội dung thật. 2 mật khẩu độc lập hoàn toàn với nhau.
+// ============================================================
+
+/// Mã hóa 1 key với thêm mật khẩu riêng. Trả về:
+/// - `EncryptedData` NGOÀI (lưu vào cột ciphertext/nonce hiện có)
+/// - `extra_salt` (lưu cột mới, dùng để derive lại key phụ lúc mở)
+/// - `extra_nonce` (lưu cột mới, nonce của lớp mã hóa TRONG)
+pub fn encrypt_key_value_with_extra_password(
+    vault_key: &[u8; 32],
+    key_id: &str,
+    plaintext_key: &str,
+    extra_password: &str,
+) -> Result<(cipher::EncryptedData, [u8; kdf::SALT_LEN], [u8; cipher::NONCE_LEN]), String> {
+    let extra_salt = kdf::generate_salt();
+    let extra_key = kdf::derive_key(extra_password, &extra_salt, &KdfParams::default())?;
+
+    // Lớp TRONG: mã hóa bằng key phụ (từ mật khẩu riêng)
+    let inner = cipher::encrypt(&extra_key, plaintext_key.as_bytes(), key_id.as_bytes())?;
+
+    // Lớp NGOÀI: mã hóa ciphertext_inner bằng Vault Key như bình thường
+    let outer = cipher::encrypt(vault_key, &inner.ciphertext, key_id.as_bytes())?;
+
+    Ok((outer, extra_salt, inner.nonce))
+}
+
+/// Giải mã key có mật khẩu riêng — cần cả Vault Key (đã unlock) VÀ
+/// Key Password riêng (người dùng vừa nhập) mới ra được plaintext.
+pub fn decrypt_key_value_with_extra_password(
+    vault_key: &[u8; 32],
+    key_id: &str,
+    ciphertext: &[u8],
+    nonce: &[u8; cipher::NONCE_LEN],
+    extra_salt: &[u8],
+    extra_nonce: &[u8; cipher::NONCE_LEN],
+    extra_password: &str,
+) -> Result<String, String> {
+    // Bóc lớp NGOÀI bằng Vault Key -> ra ciphertext_inner
+    let inner_ciphertext = cipher::decrypt(vault_key, ciphertext, nonce, key_id.as_bytes())?;
+
+    // Bóc lớp TRONG bằng key phụ derive từ Key Password vừa nhập.
+    // Nếu sai mật khẩu riêng, decrypt ở đây sẽ fail -> báo đúng mã lỗi
+    // ERR_INVALID_KEY_PASSWORD (khác với lỗi hệ thống ERR_INTERNAL).
+    let extra_key = kdf::derive_key(extra_password, extra_salt, &KdfParams::default())?;
+    let plaintext_bytes = cipher::decrypt(&extra_key, &inner_ciphertext, extra_nonce, key_id.as_bytes())
+        .map_err(|_| "ERR_INVALID_KEY_PASSWORD".to_string())?;
+
+    String::from_utf8(plaintext_bytes)
+        .map_err(|e| crate::error::internal_error("key_password_decrypted_not_utf8", e))
+}
+
 /// Xóa một buffer 32-byte khỏi RAM một cách an toàn.
 /// Gọi hàm này khi lock vault hoặc app thoát.
 pub fn wipe_key(key: &mut [u8; 32]) {
@@ -180,6 +241,96 @@ mod tests {
         let decrypted = decrypt_key_value(&vault_key, key_id, &encrypted.ciphertext, &encrypted.nonce).unwrap();
 
         assert_eq!(decrypted, secret);
+    }
+
+    #[test]
+    fn extra_password_encrypt_then_decrypt_roundtrip() {
+        let (_, vault_key) = setup_vault("master_pw_dai_du_12_ky_tu").unwrap();
+        let key_id = "key-extra-1";
+        let secret = "super-secret-crypto-wallet-key";
+        let extra_password = "mat_khau_rieng_cua_key_nay";
+
+        let (outer, extra_salt, extra_nonce) =
+            encrypt_key_value_with_extra_password(&vault_key, key_id, secret, extra_password).unwrap();
+
+        let decrypted = decrypt_key_value_with_extra_password(
+            &vault_key,
+            key_id,
+            &outer.ciphertext,
+            &outer.nonce,
+            &extra_salt,
+            &extra_nonce,
+            extra_password,
+        )
+        .unwrap();
+
+        assert_eq!(decrypted, secret);
+    }
+
+    #[test]
+    fn extra_password_wrong_key_password_fails() {
+        let (_, vault_key) = setup_vault("master_pw_dai_du_12_ky_tu").unwrap();
+        let key_id = "key-extra-2";
+        let secret = "bi mat quan trong";
+
+        let (outer, extra_salt, extra_nonce) =
+            encrypt_key_value_with_extra_password(&vault_key, key_id, secret, "mat_khau_dung").unwrap();
+
+        let result = decrypt_key_value_with_extra_password(
+            &vault_key,
+            key_id,
+            &outer.ciphertext,
+            &outer.nonce,
+            &extra_salt,
+            &extra_nonce,
+            "mat_khau_sai",
+        );
+
+        assert_eq!(result, Err("ERR_INVALID_KEY_PASSWORD".to_string()));
+    }
+
+    #[test]
+    fn extra_password_wrong_vault_key_fails() {
+        // Đúng key password nhưng SAI vault key (VD vault bị unlock nhầm
+        // vault khác) -> phải fail ở lớp NGOÀI trước khi chạm tới lớp trong.
+        let (_, vault_key) = setup_vault("master_pw_dai_du_12_ky_tu").unwrap();
+        let (_, wrong_vault_key) = setup_vault("mot_master_password_khac_12ky").unwrap();
+        let key_id = "key-extra-3";
+        let secret = "noi dung bi mat";
+
+        let (outer, extra_salt, extra_nonce) =
+            encrypt_key_value_with_extra_password(&vault_key, key_id, secret, "key_password").unwrap();
+
+        let result = decrypt_key_value_with_extra_password(
+            &wrong_vault_key,
+            key_id,
+            &outer.ciphertext,
+            &outer.nonce,
+            &extra_salt,
+            &extra_nonce,
+            "key_password",
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extra_password_layers_are_independent() {
+        // Mã hóa cùng 1 secret 2 lần với cùng vault_key + cùng extra_password
+        // nhưng salt/nonce ngẫu nhiên mỗi lần -> ciphertext phải khác nhau
+        // (chống rò rỉ pattern khi 2 key trùng nội dung).
+        let (_, vault_key) = setup_vault("master_pw_dai_du_12_ky_tu").unwrap();
+        let key_id = "key-extra-4";
+        let secret = "cung mot noi dung";
+
+        let (outer1, salt1, nonce1) =
+            encrypt_key_value_with_extra_password(&vault_key, key_id, secret, "pw").unwrap();
+        let (outer2, salt2, nonce2) =
+            encrypt_key_value_with_extra_password(&vault_key, key_id, secret, "pw").unwrap();
+
+        assert_ne!(outer1.ciphertext, outer2.ciphertext);
+        assert_ne!(salt1, salt2);
+        assert_ne!(nonce1, nonce2);
     }
 
     #[test]

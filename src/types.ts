@@ -11,6 +11,7 @@ export interface KeySummary {
   notes: string | null;
   created_at: number;
   updated_at: number;
+  has_extra_password: boolean;
 }
 
 export interface KeyWithSecret {
@@ -28,6 +29,7 @@ export interface NewKeyInput {
   secret_value: string;
   tags: string[];
   notes: string | null;
+  extra_password: string | null;
 }
 
 // Nhãn hiển thị cho từng KeyType giờ lấy qua getKeyTypeLabels(t) trong

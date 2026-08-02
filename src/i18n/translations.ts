@@ -70,6 +70,31 @@ export interface Translations {
   notesOptionalPlaceholder: string;
   saveKeyBtn: string;
   savingKeyBtn: string;
+  extraPasswordCheckbox: string;
+  extraPasswordFieldLabel: string;
+  extraPasswordFieldPlaceholder: string;
+
+  // Per-key password: protected badge + unlock flow
+  protectedBadge: string;
+  keyPasswordRequiredTitle: string;
+  keyPasswordRequiredSubtitle: string;
+  keyPasswordLabel: string;
+  unlockKeyBtn: string;
+  unlockingKeyBtn: string;
+
+  // Per-key password: management (add/remove/change)
+  addKeyPasswordBtn: string;
+  removeKeyPasswordBtn: string;
+  changeKeyPasswordBtn: string;
+  addKeyPasswordTitle: string;
+  removeKeyPasswordTitle: string;
+  changeKeyPasswordTitle: string;
+  newKeyPasswordLabel: string;
+  confirmKeyPasswordLabel: string;
+  currentKeyPasswordLabel: string;
+  savingBtn: string;
+  removingBtn: string;
+  changingBtn: string;
 
   // Settings modal
   settingsTitle: string;
@@ -110,6 +135,9 @@ export interface Translations {
   errorTimeoutTooShort: string;
   errorGeneric: string;
   errorInternal: string;
+  errorKeyPasswordTooShort: string;
+  errorInvalidKeyPassword: string;
+  errorKeyAlreadyProtected: string;
 }
 
 const en: Translations = {
@@ -172,6 +200,29 @@ const en: Translations = {
   notesOptionalPlaceholder: 'Optional',
   saveKeyBtn: 'Save to vault',
   savingKeyBtn: 'Saving...',
+  extraPasswordCheckbox: 'Protect with an extra password',
+  extraPasswordFieldLabel: 'Password for this key',
+  extraPasswordFieldPlaceholder: 'At least 8 characters',
+
+  protectedBadge: 'Extra protected',
+  keyPasswordRequiredTitle: 'This key is extra protected',
+  keyPasswordRequiredSubtitle: 'Enter this key\'s password to view its content.',
+  keyPasswordLabel: 'Key password',
+  unlockKeyBtn: 'Unlock key',
+  unlockingKeyBtn: 'Unlocking...',
+
+  addKeyPasswordBtn: '🔒 Add extra password',
+  removeKeyPasswordBtn: 'Remove extra password',
+  changeKeyPasswordBtn: 'Change extra password',
+  addKeyPasswordTitle: 'Add extra password',
+  removeKeyPasswordTitle: 'Remove extra password',
+  changeKeyPasswordTitle: 'Change extra password',
+  newKeyPasswordLabel: 'New key password',
+  confirmKeyPasswordLabel: 'Confirm key password',
+  currentKeyPasswordLabel: 'Current key password',
+  savingBtn: 'Saving...',
+  removingBtn: 'Removing...',
+  changingBtn: 'Changing...',
 
   settingsTitle: 'Settings',
   autoLockLabel: 'Auto-lock after inactivity',
@@ -208,6 +259,9 @@ const en: Translations = {
   errorTimeoutTooShort: 'Minimum auto-lock time is 30 seconds',
   errorGeneric: 'Something went wrong',
   errorInternal: 'An unexpected error occurred. Please try again or restart the app.',
+  errorKeyPasswordTooShort: 'Key password must be at least 8 characters',
+  errorInvalidKeyPassword: 'Incorrect key password',
+  errorKeyAlreadyProtected: 'This key already has an extra password',
 };
 
 const vi: Translations = {
@@ -270,6 +324,29 @@ const vi: Translations = {
   notesOptionalPlaceholder: 'Tùy chọn',
   saveKeyBtn: 'Lưu vào két',
   savingKeyBtn: 'Đang lưu...',
+  extraPasswordCheckbox: 'Bảo vệ thêm bằng mật khẩu riêng',
+  extraPasswordFieldLabel: 'Mật khẩu riêng cho key này',
+  extraPasswordFieldPlaceholder: 'Ít nhất 8 ký tự',
+
+  protectedBadge: 'Bảo vệ thêm',
+  keyPasswordRequiredTitle: 'Key này được bảo vệ thêm',
+  keyPasswordRequiredSubtitle: 'Nhập mật khẩu riêng của key này để xem nội dung.',
+  keyPasswordLabel: 'Mật khẩu riêng',
+  unlockKeyBtn: 'Mở khóa key',
+  unlockingKeyBtn: 'Đang mở khóa...',
+
+  addKeyPasswordBtn: '🔒 Thêm mật khẩu riêng',
+  removeKeyPasswordBtn: 'Gỡ mật khẩu riêng',
+  changeKeyPasswordBtn: 'Đổi mật khẩu riêng',
+  addKeyPasswordTitle: 'Thêm mật khẩu riêng',
+  removeKeyPasswordTitle: 'Gỡ mật khẩu riêng',
+  changeKeyPasswordTitle: 'Đổi mật khẩu riêng',
+  newKeyPasswordLabel: 'Mật khẩu riêng mới',
+  confirmKeyPasswordLabel: 'Xác nhận mật khẩu riêng',
+  currentKeyPasswordLabel: 'Mật khẩu riêng hiện tại',
+  savingBtn: 'Đang lưu...',
+  removingBtn: 'Đang gỡ...',
+  changingBtn: 'Đang đổi...',
 
   settingsTitle: 'Cài đặt',
   autoLockLabel: 'Tự động khóa sau khi không hoạt động',
@@ -306,6 +383,9 @@ const vi: Translations = {
   errorTimeoutTooShort: 'Thời gian auto-lock tối thiểu là 30 giây',
   errorGeneric: 'Đã xảy ra lỗi không xác định',
   errorInternal: 'Đã xảy ra lỗi ngoài dự kiến. Vui lòng thử lại hoặc khởi động lại app.',
+  errorKeyPasswordTooShort: 'Mật khẩu riêng cần ít nhất 8 ký tự',
+  errorInvalidKeyPassword: 'Mật khẩu riêng không đúng',
+  errorKeyAlreadyProtected: 'Key này đã có mật khẩu riêng rồi',
 };
 
 export type Language = 'en' | 'vi';
@@ -348,6 +428,9 @@ export function translateError(err: unknown, t: Translations): string {
     ERR_KEY_NOT_FOUND: t.errorKeyNotFound,
     ERR_TIMEOUT_TOO_SHORT: t.errorTimeoutTooShort,
     ERR_INTERNAL: t.errorInternal,
+    ERR_KEY_PASSWORD_TOO_SHORT: t.errorKeyPasswordTooShort,
+    ERR_INVALID_KEY_PASSWORD: t.errorInvalidKeyPassword,
+    ERR_KEY_ALREADY_PROTECTED: t.errorKeyAlreadyProtected,
   };
 
   if (raw in knownErrors) return knownErrors[raw];

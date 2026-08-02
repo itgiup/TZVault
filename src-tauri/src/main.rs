@@ -53,6 +53,10 @@ fn main() {
             commands::keys::cmd_add_key,
             commands::keys::cmd_list_keys,
             commands::keys::cmd_get_key_secret,
+            commands::keys::cmd_unlock_key_with_password,
+            commands::keys::cmd_add_key_password,
+            commands::keys::cmd_remove_key_password,
+            commands::keys::cmd_change_key_password,
             commands::keys::cmd_delete_key,
         ])
         .run(tauri::generate_context!())
