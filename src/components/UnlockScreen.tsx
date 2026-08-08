@@ -1,7 +1,7 @@
 // src/components/UnlockScreen.tsx
 
-import { useState } from 'react';
-import { unlockVault } from '../api/vault';
+import { useEffect, useState } from 'react';
+import { unlockVault, getDbPath, setDbPath, pickLinkSource } from '../api/vault';
 import { translateError } from '../i18n/translations';
 import { useI18n } from '../i18n/LanguageContext';
 import { Dial } from './Dial';
@@ -19,6 +19,16 @@ export function UnlockScreen({ onUnlocked }: UnlockScreenProps) {
   const [submitting, setSubmitting] = useState(false);
   const [errorCode, setErrorCode] = useState<unknown>(null);
   const [failCount, setFailCount] = useState(0);
+
+  const [currentDbPath, setCurrentDbPath] = useState<string | null>(null);
+  const [switchingDb, setSwitchingDb] = useState(false);
+  const [switchErrorCode, setSwitchErrorCode] = useState<unknown>(null);
+
+  useEffect(() => {
+    getDbPath()
+      .then(setCurrentDbPath)
+      .catch(() => setCurrentDbPath(null));
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -43,7 +53,27 @@ export function UnlockScreen({ onUnlocked }: UnlockScreenProps) {
     }
   }
 
+  async function handleSwitchDb() {
+    setSwitchErrorCode(null);
+    const srcPath = await pickLinkSource(t.linkDialogTitle, t.vaultFileFilterName);
+    if (!srcPath) return; // bấm Cancel trên dialog
+
+    setSwitchingDb(true);
+    try {
+      await setDbPath(srcPath, 'link');
+      setCurrentDbPath(srcPath);
+      setPassword('');
+      setErrorCode(null);
+      setFailCount(0);
+    } catch (err) {
+      setSwitchErrorCode(err);
+    } finally {
+      setSwitchingDb(false);
+    }
+  }
+
   const error = errorCode ? translateError(errorCode, t) : null;
+  const switchError = switchErrorCode ? translateError(switchErrorCode, t) : null;
 
   return (
     <div className="auth-screen">
@@ -75,6 +105,29 @@ export function UnlockScreen({ onUnlocked }: UnlockScreenProps) {
             {submitting ? t.unlockingBtn : t.unlockBtn}
           </button>
         </form>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
+          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+          <span className="hint-text">{t.orDivider}</span>
+          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+        </div>
+
+        <button
+          className="btn btn-secondary"
+          onClick={handleSwitchDb}
+          disabled={switchingDb}
+          style={{ width: '100%' }}
+        >
+          {switchingDb ? t.linkingVaultBtn : t.linkVaultBtn}
+        </button>
+
+        {switchError && <p className="error-text">{switchError}</p>}
+
+        {currentDbPath && (
+          <p className="hint-text" style={{ wordBreak: 'break-all', textAlign: 'center' }}>
+            {currentDbPath}
+          </p>
+        )}
       </div>
     </div>
   );
