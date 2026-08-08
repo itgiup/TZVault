@@ -1,7 +1,16 @@
 // src/components/SettingsModal.tsx
 
-import { useState } from 'react';
-import { changePassword, setAutoLockTimeout } from '../api/vault';
+import { useEffect, useState } from 'react';
+import {
+  changePassword,
+  setAutoLockTimeout,
+  exportVault,
+  pickExportDestination,
+  getDbPath,
+  setDbPath,
+  pickMoveDestination,
+  pickLinkSource,
+} from '../api/vault';
 import { translateError } from '../i18n/translations';
 import { useI18n } from '../i18n/LanguageContext';
 import { Modal, useModalClose } from './Modal';
@@ -9,19 +18,26 @@ import { Modal, useModalClose } from './Modal';
 interface SettingsModalProps {
   onClose: () => void;
   onPasswordChanged: () => void; // vault bị lock lại sau khi đổi password -> quay về Unlock
+  onVaultSourceChanged: () => void; // vault bị lock lại sau khi move/link sang vault khác
 }
 
 const MIN_LENGTH = 12;
 
-export function SettingsModal({ onClose, onPasswordChanged }: SettingsModalProps) {
+export function SettingsModal({ onClose, onPasswordChanged, onVaultSourceChanged }: SettingsModalProps) {
   return (
     <Modal onClose={onClose}>
-      <SettingsModalContent onPasswordChanged={onPasswordChanged} />
+      <SettingsModalContent onPasswordChanged={onPasswordChanged} onVaultSourceChanged={onVaultSourceChanged} />
     </Modal>
   );
 }
 
-function SettingsModalContent({ onPasswordChanged }: { onPasswordChanged: () => void }) {
+function SettingsModalContent({
+  onPasswordChanged,
+  onVaultSourceChanged,
+}: {
+  onPasswordChanged: () => void;
+  onVaultSourceChanged: () => void;
+}) {
   const { t } = useI18n();
   const { requestClose, closeThen } = useModalClose();
 
@@ -41,6 +57,20 @@ function SettingsModalContent({ onPasswordChanged }: { onPasswordChanged: () => 
   const [timeoutSeconds, setTimeoutSeconds] = useState(300);
   const [timeoutSaved, setTimeoutSaved] = useState(false);
   const [timeoutErrorCode, setTimeoutErrorCode] = useState<unknown>(null);
+
+  const [exporting, setExporting] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
+  const [exportErrorCode, setExportErrorCode] = useState<unknown>(null);
+
+  const [currentDbPath, setCurrentDbPath] = useState<string | null>(null);
+  const [relocating, setRelocating] = useState<'move' | 'link' | null>(null);
+  const [relocateErrorCode, setRelocateErrorCode] = useState<unknown>(null);
+
+  useEffect(() => {
+    getDbPath()
+      .then(setCurrentDbPath)
+      .catch(() => setCurrentDbPath(null));
+  }, []);
 
   const mismatch = confirmPassword.length > 0 && newPassword !== confirmPassword;
   const canSubmitPassword =
@@ -77,8 +107,59 @@ function SettingsModalContent({ onPasswordChanged }: { onPasswordChanged: () => 
     }
   }
 
+  async function handleExport() {
+    setExportErrorCode(null);
+    setExportSuccess(false);
+
+    const destPath = await pickExportDestination(t.exportDialogTitle, t.vaultFileFilterName);
+    if (!destPath) return; // người dùng bấm Cancel trên dialog
+
+    setExporting(true);
+    try {
+      await exportVault(destPath);
+      setExportSuccess(true);
+      setTimeout(() => setExportSuccess(false), 3000);
+    } catch (err) {
+      setExportErrorCode(err);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleMove() {
+    setRelocateErrorCode(null);
+    const destPath = await pickMoveDestination(t.moveDialogTitle, t.vaultFileFilterName);
+    if (!destPath) return;
+
+    setRelocating('move');
+    try {
+      await setDbPath(destPath, 'move');
+      onVaultSourceChanged();
+    } catch (err) {
+      setRelocateErrorCode(err);
+      setRelocating(null);
+    }
+  }
+
+  async function handleLink() {
+    setRelocateErrorCode(null);
+    const srcPath = await pickLinkSource(t.linkDialogTitle, t.vaultFileFilterName);
+    if (!srcPath) return;
+
+    setRelocating('link');
+    try {
+      await setDbPath(srcPath, 'link');
+      onVaultSourceChanged();
+    } catch (err) {
+      setRelocateErrorCode(err);
+      setRelocating(null);
+    }
+  }
+
   const passwordError = passwordErrorCode ? translateError(passwordErrorCode, t) : null;
   const timeoutError = timeoutErrorCode ? translateError(timeoutErrorCode, t) : null;
+  const exportError = exportErrorCode ? translateError(exportErrorCode, t) : null;
+  const relocateError = relocateErrorCode ? translateError(relocateErrorCode, t) : null;
 
   return (
     <>
@@ -97,6 +178,45 @@ function SettingsModalContent({ onPasswordChanged }: { onPasswordChanged: () => 
         {timeoutSaved && <p className="hint-text" style={{ color: 'var(--success)' }}>{t.savedLabel}</p>}
         {timeoutError && <p className="error-text">{timeoutError}</p>}
         <p className="hint-text">{t.autoLockHint}</p>
+      </div>
+
+      <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+
+      {/* ---------- Export vault ---------- */}
+      <div className="field">
+        <label>{t.exportVaultTitle}</label>
+        <p className="hint-text" style={{ marginTop: 0 }}>{t.exportVaultHint}</p>
+        <button className="btn btn-secondary" onClick={handleExport} disabled={exporting} style={{ alignSelf: 'flex-start' }}>
+          {exporting ? t.exportingVaultBtn : t.exportVaultBtn}
+        </button>
+        {exportSuccess && <p className="hint-text" style={{ color: 'var(--success)' }}>{t.exportVaultSuccess}</p>}
+        {exportError && <p className="error-text">{exportError}</p>}
+      </div>
+
+      <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+
+      {/* ---------- Vị trí vault (move / link) ---------- */}
+      <div className="field">
+        <label>{t.vaultLocationTitle}</label>
+        <p className="hint-text" style={{ marginTop: 0 }}>{t.vaultLocationHint}</p>
+
+        {currentDbPath && (
+          <div className="secret-box" style={{ fontSize: 12, padding: 10 }}>
+            {currentDbPath}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
+          <button className="btn btn-secondary" onClick={handleMove} disabled={relocating !== null}>
+            {relocating === 'move' ? t.movingVaultBtn : t.moveVaultBtn}
+          </button>
+          <button className="btn btn-secondary" onClick={handleLink} disabled={relocating !== null}>
+            {relocating === 'link' ? t.linkingVaultBtn : t.linkVaultBtn}
+          </button>
+        </div>
+
+        <p className="hint-text">{t.vaultRelocateWarning}</p>
+        {relocateError && <p className="error-text">{relocateError}</p>}
       </div>
 
       <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />

@@ -194,6 +194,10 @@ export function VaultScreen({ onLocked, theme, onToggleTheme }: VaultScreenProps
             setShowSettings(false);
             onLocked();
           }}
+          onVaultSourceChanged={() => {
+            setShowSettings(false);
+            onLocked();
+          }}
         />
       )}
     </div>

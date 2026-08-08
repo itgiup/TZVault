@@ -113,6 +113,29 @@ export interface Translations {
   changePasswordHint: string;
   changePasswordBtn: string;
   changingPasswordBtn: string;
+  exportVaultTitle: string;
+  exportVaultHint: string;
+  exportVaultBtn: string;
+  exportingVaultBtn: string;
+  exportVaultSuccess: string;
+  exportDialogTitle: string;
+  vaultFileFilterName: string;
+  importVaultBtn: string;
+  importingVaultBtn: string;
+  importVaultSuccess: string;
+  importDialogTitle: string;
+  orDivider: string;
+
+  vaultLocationTitle: string;
+  vaultLocationHint: string;
+  currentLocationLabel: string;
+  moveVaultBtn: string;
+  movingVaultBtn: string;
+  linkVaultBtn: string;
+  linkingVaultBtn: string;
+  moveDialogTitle: string;
+  linkDialogTitle: string;
+  vaultRelocateWarning: string;
 
   // Key types
   keyTypeSsh: string;
@@ -138,6 +161,7 @@ export interface Translations {
   errorKeyPasswordTooShort: string;
   errorInvalidKeyPassword: string;
   errorKeyAlreadyProtected: string;
+  errorInvalidVaultFile: string;
 }
 
 const en: Translations = {
@@ -240,6 +264,29 @@ const en: Translations = {
   changePasswordHint: "After a successful change, you'll need to unlock the vault again with the new password.",
   changePasswordBtn: 'Change password',
   changingPasswordBtn: 'Changing...',
+  exportVaultTitle: 'Export Vault',
+  exportVaultHint: 'Save your entire vault as one file — copy it to a USB drive, cloud storage, or another computer.',
+  exportVaultBtn: 'Export Vault',
+  exportingVaultBtn: 'Exporting...',
+  exportVaultSuccess: 'Vault exported successfully',
+  exportDialogTitle: 'Save vault backup',
+  vaultFileFilterName: 'Vault Database',
+  importVaultBtn: 'Import existing vault',
+  importingVaultBtn: 'Importing...',
+  importVaultSuccess: 'Vault imported successfully',
+  importDialogTitle: 'Select a vault file to import',
+  orDivider: 'or',
+
+  vaultLocationTitle: 'Vault Location',
+  vaultLocationHint: 'Move your vault to a synced folder (Dropbox, Google Drive...) or link to a vault file already stored elsewhere.',
+  currentLocationLabel: 'Current location',
+  moveVaultBtn: 'Move vault to new location...',
+  movingVaultBtn: 'Moving...',
+  linkVaultBtn: 'Use a different vault file...',
+  linkingVaultBtn: 'Linking...',
+  moveDialogTitle: 'Choose new location for vault',
+  linkDialogTitle: 'Select an existing vault file',
+  vaultRelocateWarning: "You'll need to unlock again after this.",
 
   keyTypeSsh: 'SSH Key',
   keyTypeCryptoWallet: 'Crypto Wallet',
@@ -262,6 +309,7 @@ const en: Translations = {
   errorKeyPasswordTooShort: 'Key password must be at least 8 characters',
   errorInvalidKeyPassword: 'Incorrect key password',
   errorKeyAlreadyProtected: 'This key already has an extra password',
+  errorInvalidVaultFile: "This doesn't look like a valid vault file",
 };
 
 const vi: Translations = {
@@ -364,6 +412,29 @@ const vi: Translations = {
   changePasswordHint: 'Sau khi đổi thành công, bạn sẽ cần mở khóa lại két bằng mật khẩu mới.',
   changePasswordBtn: 'Đổi mật khẩu',
   changingPasswordBtn: 'Đang đổi...',
+  exportVaultTitle: 'Xuất Vault',
+  exportVaultHint: 'Lưu toàn bộ vault thành 1 file — copy vào USB, cloud, hoặc mang sang máy khác.',
+  exportVaultBtn: 'Xuất Vault',
+  exportingVaultBtn: 'Đang xuất...',
+  exportVaultSuccess: 'Đã xuất vault thành công',
+  exportDialogTitle: 'Lưu bản sao vault',
+  vaultFileFilterName: 'Vault Database',
+  importVaultBtn: 'Nhập vault đã có',
+  importingVaultBtn: 'Đang nhập...',
+  importVaultSuccess: 'Đã nhập vault thành công',
+  importDialogTitle: 'Chọn file vault cần nhập',
+  orDivider: 'hoặc',
+
+  vaultLocationTitle: 'Vị trí Vault',
+  vaultLocationHint: 'Di chuyển vault vào thư mục đồng bộ (Dropbox, Google Drive...) hoặc liên kết tới 1 file vault đã có sẵn ở nơi khác.',
+  currentLocationLabel: 'Vị trí hiện tại',
+  moveVaultBtn: 'Di chuyển vault đến vị trí mới...',
+  movingVaultBtn: 'Đang di chuyển...',
+  linkVaultBtn: 'Dùng 1 file vault khác...',
+  linkingVaultBtn: 'Đang liên kết...',
+  moveDialogTitle: 'Chọn vị trí mới cho vault',
+  linkDialogTitle: 'Chọn file vault đã có sẵn',
+  vaultRelocateWarning: 'Bạn sẽ cần mở khóa lại sau khi thực hiện.',
 
   keyTypeSsh: 'SSH Key',
   keyTypeCryptoWallet: 'Ví Crypto',
@@ -386,6 +457,7 @@ const vi: Translations = {
   errorKeyPasswordTooShort: 'Mật khẩu riêng cần ít nhất 8 ký tự',
   errorInvalidKeyPassword: 'Mật khẩu riêng không đúng',
   errorKeyAlreadyProtected: 'Key này đã có mật khẩu riêng rồi',
+  errorInvalidVaultFile: 'File này không phải file vault hợp lệ',
 };
 
 export type Language = 'en' | 'vi';
@@ -431,6 +503,7 @@ export function translateError(err: unknown, t: Translations): string {
     ERR_KEY_PASSWORD_TOO_SHORT: t.errorKeyPasswordTooShort,
     ERR_INVALID_KEY_PASSWORD: t.errorInvalidKeyPassword,
     ERR_KEY_ALREADY_PROTECTED: t.errorKeyAlreadyProtected,
+    ERR_INVALID_VAULT_FILE: t.errorInvalidVaultFile,
   };
 
   if (raw in knownErrors) return knownErrors[raw];

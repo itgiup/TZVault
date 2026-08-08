@@ -3,6 +3,7 @@
 use tauri::State;
 use uuid::Uuid;
 use crate::crypto;
+use crate::crypto::KeyMetadata;
 use crate::vault::state::VaultState;
 use crate::models::{KeySummary, KeyWithSecret, NewKeyInput, StoredKeyRow};
 use crate::commands::auth::StorageState;
@@ -20,9 +21,20 @@ fn row_to_nonce(bytes: &[u8]) -> Result<[u8; crypto::cipher::NONCE_LEN], String>
         .map_err(|_| crate::error::internal_error_msg("nonce_length_mismatch"))
 }
 
+/// Giải mã metadata (name/key_type/tags/notes) của 1 row -> KeyMetadata.
+fn decrypt_row_metadata(
+    vault_key: &[u8; 32],
+    id: &str,
+    metadata_ciphertext: &[u8],
+    metadata_nonce: &[u8],
+) -> Result<KeyMetadata, String> {
+    let nonce = row_to_nonce(metadata_nonce)?;
+    crypto::decrypt_metadata(vault_key, id, metadata_ciphertext, &nonce)
+}
+
 /// Thêm 1 private key mới vào vault. Trả về id vừa tạo.
-/// Nếu `input.extra_password` có giá trị, key được mã hóa thêm 1 lớp
-/// bằng mật khẩu riêng (xem crypto::encrypt_key_value_with_extra_password).
+/// Cả nội dung key VÀ metadata (name/type/tags/notes) đều được mã hóa
+/// bằng Vault Key trước khi lưu — không trường nào là plaintext trong DB.
 #[tauri::command]
 pub fn cmd_add_key(
     input: NewKeyInput,
@@ -40,10 +52,17 @@ pub fn cmd_add_key(
     }
 
     let id = Uuid::new_v4().to_string();
-    let tags_json = serde_json::to_string(&input.tags).map_err(|e| crate::error::internal_error("encode_tags", e))?;
     let ts = now_ts();
 
-    let row = match &input.extra_password {
+    let metadata = KeyMetadata {
+        name: input.name,
+        key_type: input.key_type,
+        tags: input.tags,
+        notes: input.notes,
+    };
+    let encrypted_metadata = crypto::encrypt_metadata(&vault_key, &id, &metadata)?;
+
+    let (ciphertext, nonce, has_extra_password, extra_salt, extra_nonce) = match &input.extra_password {
         Some(extra_password) if !extra_password.is_empty() => {
             let (outer, extra_salt, extra_nonce) = crypto::encrypt_key_value_with_extra_password(
                 &vault_key,
@@ -51,39 +70,25 @@ pub fn cmd_add_key(
                 &input.secret_value,
                 extra_password,
             )?;
-
-            StoredKeyRow {
-                id: id.clone(),
-                name: input.name,
-                key_type: input.key_type,
-                ciphertext: outer.ciphertext,
-                nonce: outer.nonce.to_vec(),
-                tags: tags_json,
-                notes: input.notes,
-                created_at: ts,
-                updated_at: ts,
-                has_extra_password: true,
-                extra_salt: Some(extra_salt.to_vec()),
-                extra_nonce: Some(extra_nonce.to_vec()),
-            }
+            (outer.ciphertext, outer.nonce.to_vec(), true, Some(extra_salt.to_vec()), Some(extra_nonce.to_vec()))
         }
         _ => {
             let encrypted = crypto::encrypt_key_value(&vault_key, &id, &input.secret_value)?;
-            StoredKeyRow {
-                id: id.clone(),
-                name: input.name,
-                key_type: input.key_type,
-                ciphertext: encrypted.ciphertext,
-                nonce: encrypted.nonce.to_vec(),
-                tags: tags_json,
-                notes: input.notes,
-                created_at: ts,
-                updated_at: ts,
-                has_extra_password: false,
-                extra_salt: None,
-                extra_nonce: None,
-            }
+            (encrypted.ciphertext, encrypted.nonce.to_vec(), false, None, None)
         }
+    };
+
+    let row = StoredKeyRow {
+        id: id.clone(),
+        metadata_ciphertext: encrypted_metadata.ciphertext,
+        metadata_nonce: encrypted_metadata.nonce.to_vec(),
+        ciphertext,
+        nonce,
+        created_at: ts,
+        updated_at: ts,
+        has_extra_password,
+        extra_salt,
+        extra_nonce,
     };
 
     db.insert_key(&row)?;
@@ -92,17 +97,35 @@ pub fn cmd_add_key(
     Ok(id)
 }
 
-/// Lấy danh sách key (KHÔNG bao gồm giá trị bí mật) — dùng cho màn hình list.
+/// Lấy danh sách key (KHÔNG bao gồm giá trị bí mật) — dùng cho màn hình
+/// list. Metadata được giải mã ở đây (cần vault_key), storage.rs chỉ trả
+/// về ciphertext thô.
 #[tauri::command]
 pub fn cmd_list_keys(
     storage: State<StorageState>,
     vault_state: State<VaultState>,
 ) -> Result<Vec<KeySummary>, String> {
-    // Vẫn cần vault unlocked để list, dù không giải mã gì —
-    // tránh lộ cả metadata (tên key) khi vault đang khóa.
-    vault_state.get_vault_key()?;
+    let vault_key = vault_state.get_vault_key()?;
     let db = storage.0.lock().map_err(|_| crate::error::internal_error_msg("storage_mutex_lock"))?;
-    db.list_key_summaries()
+
+    let meta_rows = db.list_key_meta_rows()?;
+
+    meta_rows
+        .into_iter()
+        .map(|row| {
+            let metadata = decrypt_row_metadata(&vault_key, &row.id, &row.metadata_ciphertext, &row.metadata_nonce)?;
+            Ok(KeySummary {
+                id: row.id,
+                name: metadata.name,
+                key_type: metadata.key_type,
+                tags: metadata.tags,
+                notes: metadata.notes,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                has_extra_password: row.has_extra_password,
+            })
+        })
+        .collect()
 }
 
 /// Lấy giá trị thật của 1 key — chỉ dùng cho key KHÔNG có mật khẩu riêng.
@@ -123,19 +146,19 @@ pub fn cmd_get_key_secret(
         return Err("ERR_EXTRA_PASSWORD_REQUIRED".to_string());
     }
 
+    let metadata = decrypt_row_metadata(&vault_key, &row.id, &row.metadata_ciphertext, &row.metadata_nonce)?;
     let nonce = row_to_nonce(&row.nonce)?;
     let secret = crypto::decrypt_key_value(&vault_key, &row.id, &row.ciphertext, &nonce)?;
-    let tags: Vec<String> = serde_json::from_str(&row.tags).unwrap_or_default();
 
     db.log_action("view_key", Some(&id), now_ts())?;
 
     Ok(KeyWithSecret {
         id: row.id,
-        name: row.name,
-        key_type: row.key_type,
+        name: metadata.name,
+        key_type: metadata.key_type,
         secret_value: secret,
-        tags,
-        notes: row.notes,
+        tags: metadata.tags,
+        notes: metadata.notes,
     })
 }
 
@@ -154,8 +177,6 @@ pub fn cmd_unlock_key_with_password(
     let row = db.get_key_row(&id)?;
 
     if !row.has_extra_password {
-        // Không nên xảy ra qua luồng UI bình thường (UI chỉ gọi command
-        // này khi đã biết has_extra_password = true) -> coi là lỗi hệ thống.
         return Err(crate::error::internal_error_msg("unlock_key_password_on_unprotected_key"));
     }
 
@@ -178,22 +199,21 @@ pub fn cmd_unlock_key_with_password(
         &key_password,
     )?;
 
-    let tags: Vec<String> = serde_json::from_str(&row.tags).unwrap_or_default();
+    let metadata = decrypt_row_metadata(&vault_key, &row.id, &row.metadata_ciphertext, &row.metadata_nonce)?;
 
     db.log_action("view_key_extra_password", Some(&id), now_ts())?;
 
     Ok(KeyWithSecret {
         id: row.id,
-        name: row.name,
-        key_type: row.key_type,
+        name: metadata.name,
+        key_type: metadata.key_type,
         secret_value: secret,
-        tags,
-        notes: row.notes,
+        tags: metadata.tags,
+        notes: metadata.notes,
     })
 }
 
 /// Thêm mật khẩu riêng cho 1 key HIỆN CHƯA có mật khẩu riêng.
-/// Cần vault đang unlock để đọc được nội dung hiện tại trước khi mã hóa lại.
 #[tauri::command]
 pub fn cmd_add_key_password(
     id: String,
@@ -268,7 +288,6 @@ pub fn cmd_remove_key_password(
         &current_key_password,
     )?;
 
-    // Mã hóa lại theo kiểu bình thường (chỉ 1 lớp Vault Key, bỏ lớp mật khẩu riêng)
     let encrypted = crypto::encrypt_key_value(&vault_key, &row.id, &plaintext)?;
 
     db.update_key_encryption(&id, &encrypted.ciphertext, &encrypted.nonce, false, None, None, now_ts())?;

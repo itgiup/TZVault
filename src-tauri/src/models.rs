@@ -78,15 +78,15 @@ pub struct NewKeyInput {
     pub extra_password: Option<String>,
 }
 
-/// Bản ghi thô lấy từ DB (dữ liệu vẫn đang mã hóa).
+/// Bản ghi thô lấy từ DB — CHỈ chứa dữ liệu đã mã hóa (cả metadata lẫn
+/// nội dung key). Không có trường nào ở đây là plaintext.
 pub struct StoredKeyRow {
     pub id: String,
-    pub name: String,
-    pub key_type: String,
+    /// Metadata (name/key_type/tags/notes) đã mã hóa - xem crypto::KeyMetadata
+    pub metadata_ciphertext: Vec<u8>,
+    pub metadata_nonce: Vec<u8>,
     pub ciphertext: Vec<u8>,
     pub nonce: Vec<u8>,
-    pub tags: String, // JSON string
-    pub notes: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub has_extra_password: bool,
@@ -96,4 +96,26 @@ pub struct StoredKeyRow {
     /// Nonce của lớp mã hóa TRONG (bằng key phụ) — khác với `nonce` ở
     /// trên vốn là nonce của lớp mã hóa NGOÀI (bằng Vault Key).
     pub extra_nonce: Option<Vec<u8>>,
+}
+
+/// Dùng cho danh sách (list view) — chỉ lấy phần cần để hiển thị, không
+/// đụng tới ciphertext của nội dung key (secret), giảm dữ liệu mã hóa
+/// giữ trong RAM khi không cần thiết.
+pub struct StoredKeyMetaRow {
+    pub id: String,
+    pub metadata_ciphertext: Vec<u8>,
+    pub metadata_nonce: Vec<u8>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub has_extra_password: bool,
+}
+
+/// Bản ghi CŨ (trước khi có mã hóa metadata) — chỉ dùng 1 lần trong quá
+/// trình migrate dữ liệu cũ, xem Storage::list_legacy_plaintext_rows().
+pub struct LegacyKeyRow {
+    pub id: String,
+    pub name: String,
+    pub key_type: String,
+    pub tags: String, // JSON string
+    pub notes: Option<String>,
 }

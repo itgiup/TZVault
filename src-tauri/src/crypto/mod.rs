@@ -10,6 +10,7 @@ use kdf::KdfParams;
 use rand::RngCore;
 use rand::rngs::OsRng;
 use zeroize::Zeroize;
+use serde::{Deserialize, Serialize};
 
 /// Kết quả khi setup vault lần đầu — đây là những gì sẽ được lưu
 /// vào bảng `vault_meta` trong database.
@@ -126,7 +127,51 @@ pub fn decrypt_key_value(
 }
 
 // ============================================================
-// MẬT KHẨU RIÊNG CHO TỪNG KEY — mã hóa 2 lớp
+// METADATA CỦA KEY (name/key_type/tags/notes) — CŨNG PHẢI MÃ HÓA
+//
+// Trước đây các trường này lưu plaintext trong DB. Vấn đề: ai nhặt được
+// file vault.db (dù không có master password) vẫn đọc được tên key, tag,
+// ghi chú — dù không đọc được nội dung bí mật. Với mục tiêu cho phép
+// mang file vault.db đi máy khác (export/import), đây là rò rỉ không
+// chấp nhận được.
+//
+// Gộp 4 trường vào 1 struct, serialize JSON, mã hóa 1 lần bằng Vault Key
+// (AES-256-GCM) — dùng AAD khác với AAD của secret ("{id}:meta" thay vì
+// "{id}") để 2 lớp mã hóa độc lập, không thể hoán đổi ciphertext cho nhau.
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyMetadata {
+    pub name: String,
+    pub key_type: String,
+    pub tags: Vec<String>,
+    pub notes: Option<String>,
+}
+
+fn metadata_aad(key_id: &str) -> String {
+    format!("{key_id}:meta")
+}
+
+pub fn encrypt_metadata(
+    vault_key: &[u8; 32],
+    key_id: &str,
+    metadata: &KeyMetadata,
+) -> Result<cipher::EncryptedData, String> {
+    let json = serde_json::to_vec(metadata).map_err(|e| crate::error::internal_error("encode_metadata", e))?;
+    cipher::encrypt(vault_key, &json, metadata_aad(key_id).as_bytes())
+}
+
+pub fn decrypt_metadata(
+    vault_key: &[u8; 32],
+    key_id: &str,
+    ciphertext: &[u8],
+    nonce: &[u8; cipher::NONCE_LEN],
+) -> Result<KeyMetadata, String> {
+    let bytes = cipher::decrypt(vault_key, ciphertext, nonce, metadata_aad(key_id).as_bytes())?;
+    serde_json::from_slice(&bytes).map_err(|e| crate::error::internal_error("decode_metadata", e))
+}
+
+
 //
 //   plaintext
 //     → mã hóa bằng Key Password riêng (Argon2id → AES-256-GCM)  [lớp TRONG]
@@ -241,6 +286,87 @@ mod tests {
         let decrypted = decrypt_key_value(&vault_key, key_id, &encrypted.ciphertext, &encrypted.nonce).unwrap();
 
         assert_eq!(decrypted, secret);
+    }
+
+    #[test]
+    fn metadata_encrypt_then_decrypt_roundtrip() {
+        let (_, vault_key) = setup_vault("master_pw_dai_du_12_ky_tu").unwrap();
+        let key_id = "key-meta-1";
+        let metadata = KeyMetadata {
+            name: "SSH - Production server".to_string(),
+            key_type: "ssh".to_string(),
+            tags: vec!["prod".to_string(), "aws".to_string()],
+            notes: Some("ghi chu bi mat".to_string()),
+        };
+
+        let encrypted = encrypt_metadata(&vault_key, key_id, &metadata).unwrap();
+        let decrypted = decrypt_metadata(&vault_key, key_id, &encrypted.ciphertext, &encrypted.nonce).unwrap();
+
+        assert_eq!(decrypted.name, metadata.name);
+        assert_eq!(decrypted.tags, metadata.tags);
+        assert_eq!(decrypted.notes, metadata.notes);
+    }
+
+    #[test]
+    fn metadata_ciphertext_never_contains_plaintext_name() {
+        // Kiểm tra thực tế: ciphertext không được chứa chuỗi tên gốc dưới
+        // bất kỳ dạng nào (phòng lỗi implement quên mã hóa mà chỉ encode).
+        let (_, vault_key) = setup_vault("master_pw_dai_du_12_ky_tu").unwrap();
+        let metadata = KeyMetadata {
+            name: "MOT_TEN_RAT_DE_NHAN_BIET_12345".to_string(),
+            key_type: "ssh".to_string(),
+            tags: vec![],
+            notes: None,
+        };
+
+        let encrypted = encrypt_metadata(&vault_key, "key-meta-2", &metadata).unwrap();
+        let ciphertext_as_string = String::from_utf8_lossy(&encrypted.ciphertext);
+
+        assert!(!ciphertext_as_string.contains("MOT_TEN_RAT_DE_NHAN_BIET_12345"));
+    }
+
+    #[test]
+    fn metadata_wrong_key_id_fails_decrypt() {
+        // AAD gắn với key_id -> không thể lấy ciphertext của key A rồi
+        // giải mã bằng key_id của key B (chống ciphertext-swap attack).
+        let (_, vault_key) = setup_vault("master_pw_dai_du_12_ky_tu").unwrap();
+        let metadata = KeyMetadata {
+            name: "Test".to_string(),
+            key_type: "other".to_string(),
+            tags: vec![],
+            notes: None,
+        };
+
+        let encrypted = encrypt_metadata(&vault_key, "key-A", &metadata).unwrap();
+        let result = decrypt_metadata(&vault_key, "key-B", &encrypted.ciphertext, &encrypted.nonce);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn metadata_and_secret_aad_are_independent() {
+        // Ciphertext của metadata và ciphertext của secret dùng AAD khác
+        // nhau -> không thể lấy nonce/ciphertext của lớp này gán cho lớp kia.
+        let (_, vault_key) = setup_vault("master_pw_dai_du_12_ky_tu").unwrap();
+        let key_id = "key-meta-3";
+
+        let metadata = KeyMetadata {
+            name: "Test".to_string(),
+            key_type: "other".to_string(),
+            tags: vec![],
+            notes: None,
+        };
+        let meta_encrypted = encrypt_metadata(&vault_key, key_id, &metadata).unwrap();
+        let secret_encrypted = encrypt_key_value(&vault_key, key_id, "noi dung bi mat").unwrap();
+
+        // Thử giải mã ciphertext của metadata bằng hàm decrypt_key_value
+        // (dùng AAD chỉ là key_id, không phải "key_id:meta") -> phải fail.
+        let result = decrypt_key_value(&vault_key, key_id, &meta_encrypted.ciphertext, &meta_encrypted.nonce);
+        assert!(result.is_err());
+
+        // Ngược lại cũng vậy
+        let result2 = decrypt_metadata(&vault_key, key_id, &secret_encrypted.ciphertext, &secret_encrypted.nonce);
+        assert!(result2.is_err());
     }
 
     #[test]

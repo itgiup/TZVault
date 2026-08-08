@@ -1,13 +1,16 @@
 // src-tauri/src/vault/storage.rs
 //
-// Lớp duy nhất được phép chạm vào SQLite. Không xử lý crypto ở đây —
+// Lớp duy nhất được phép chạm vào SQLite. KHÔNG xử lý crypto ở đây —
 // chỉ đọc/ghi dữ liệu đã mã hóa (ciphertext) do lớp crypto đưa xuống.
+// Kể cả metadata (name/key_type/tags/notes) giờ cũng là ciphertext —
+// storage.rs không biết và không cần biết ý nghĩa của dữ liệu nó lưu.
 
 use rusqlite::{Connection, params};
-use crate::models::{StoredKeyRow, KeySummary};
+use crate::models::{StoredKeyRow, StoredKeyMetaRow, LegacyKeyRow};
 
 pub struct Storage {
     conn: Connection,
+    db_path: String,
 }
 
 impl Storage {
@@ -17,10 +20,10 @@ impl Storage {
     /// LƯU Ý PRODUCTION: dùng `Connection::open_with_flags` kết hợp
     /// SQLCipher (feature "bundled-sqlcipher" của rusqlite) để mã hóa
     /// toàn bộ file .db ở tầng đĩa, cộng thêm với mã hóa AES-GCM ở tầng
-    /// ứng dụng đã có. Ở đây dùng SQLite thường để dễ test trong mọi môi trường.
+    /// ứng dụng đã có cho từng trường dữ liệu.
     pub fn open(db_path: &str) -> Result<Self, String> {
         let conn = Connection::open(db_path).map_err(|e| crate::error::internal_error("db_open", e))?;
-        let storage = Storage { conn };
+        let storage = Storage { conn, db_path: db_path.to_string() };
         storage.init_schema()?;
         Ok(storage)
     }
@@ -28,9 +31,50 @@ impl Storage {
     /// Dùng cho unit test: DB tồn tại hoàn toàn trong RAM, không ghi ra đĩa.
     pub fn open_in_memory() -> Result<Self, String> {
         let conn = Connection::open_in_memory().map_err(|e| crate::error::internal_error("db_open", e))?;
-        let storage = Storage { conn };
+        let storage = Storage { conn, db_path: ":memory:".to_string() };
         storage.init_schema()?;
         Ok(storage)
+    }
+
+    pub fn db_path(&self) -> &str {
+        &self.db_path
+    }
+
+    /// Xuất 1 bản sao ĐẦY ĐỦ, NHẤT QUÁN của DB hiện tại ra `dest_path`.
+    /// Dùng `VACUUM INTO` thay vì copy file thô — an toàn hơn vì đảm bảo
+    /// bản export không bị "xé" (torn) nếu có transaction đang dở dang,
+    /// và loại luôn các trang đã xóa/rác trong file gốc.
+    ///
+    /// LƯU Ý: `VACUUM INTO` yêu cầu file đích CHƯA tồn tại, nên nếu người
+    /// dùng chọn ghi đè lên 1 file export cũ (rất thường gặp), phải xóa
+    /// file đó trước khi chạy VACUUM INTO.
+    pub fn export_to(&self, dest_path: &str) -> Result<(), String> {
+        if std::path::Path::new(dest_path).exists() {
+            std::fs::remove_file(dest_path)
+                .map_err(|e| crate::error::internal_error("db_export_remove_existing", e))?;
+        }
+        self.conn
+            .execute("VACUUM INTO ?1", params![dest_path])
+            .map_err(|e| crate::error::internal_error("db_export", e))?;
+        Ok(())
+    }
+
+    /// Đóng kết nối hiện tại và mở lại TỪ ĐẦU tại cùng đường dẫn (self.db_path).
+    /// Dùng sau khi ghi đè file .db bằng dữ liệu import — bắt buộc phải mở
+    /// lại vì Connection cũ có thể còn cache schema/statement của file cũ.
+    pub fn reload(&mut self) -> Result<(), String> {
+        self.switch_path(&self.db_path.clone())
+    }
+
+    /// Đóng kết nối hiện tại và mở kết nối MỚI tới `new_path` — khác
+    /// `reload()` ở chỗ đường dẫn thực sự thay đổi, dùng khi người dùng
+    /// chọn "di chuyển" hoặc "liên kết" tới 1 file vault khác.
+    pub fn switch_path(&mut self, new_path: &str) -> Result<(), String> {
+        let conn = Connection::open(new_path).map_err(|e| crate::error::internal_error("db_reopen", e))?;
+        self.conn = conn;
+        self.db_path = new_path.to_string();
+        self.init_schema()?;
+        Ok(())
     }
 
     fn init_schema(&self) -> Result<(), String> {
@@ -47,17 +91,23 @@ impl Storage {
 
                 CREATE TABLE IF NOT EXISTS stored_keys (
                     id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    key_type TEXT NOT NULL,
+                    metadata_ciphertext BLOB,
+                    metadata_nonce BLOB,
                     ciphertext BLOB NOT NULL,
                     nonce BLOB NOT NULL,
-                    tags TEXT NOT NULL DEFAULT '[]',
-                    notes TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL,
                     has_extra_password INTEGER NOT NULL DEFAULT 0,
                     extra_salt BLOB,
-                    extra_nonce BLOB
+                    extra_nonce BLOB,
+                    -- Cột CŨ (trước bản vá mã hóa metadata) - giữ lại tạm thời
+                    -- chỉ để phục vụ migrate dữ liệu cũ, xem
+                    -- list_legacy_plaintext_rows(). Key mới tạo sau bản vá
+                    -- này không bao giờ ghi gì vào các cột dưới đây.
+                    name TEXT NOT NULL DEFAULT '',
+                    key_type TEXT NOT NULL DEFAULT '',
+                    tags TEXT NOT NULL DEFAULT '[]',
+                    notes TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS audit_log (
@@ -70,24 +120,22 @@ impl Storage {
             )
             .map_err(|e| crate::error::internal_error("db_init_schema", e))?;
 
-        self.migrate_add_extra_password_columns();
+        self.migrate_add_columns();
         Ok(())
     }
 
-    /// Migration cho DB đã tồn tại từ trước khi có tính năng "mật khẩu
-    /// riêng cho từng key" — `CREATE TABLE IF NOT EXISTS` ở trên không tự
-    /// thêm cột mới vào bảng đã có sẵn, nên cần ALTER TABLE riêng.
-    /// Bỏ qua lỗi "duplicate column" một cách an toàn (nghĩa là DB đã có
-    /// cột đó rồi, không cần làm gì thêm).
-    fn migrate_add_extra_password_columns(&self) {
+    /// Migration cho DB đã tồn tại từ trước — `CREATE TABLE IF NOT EXISTS`
+    /// ở trên không tự thêm cột mới vào bảng đã có sẵn, nên cần ALTER
+    /// TABLE riêng. Bỏ qua lỗi "duplicate column" một cách an toàn.
+    fn migrate_add_columns(&self) {
         let statements = [
             "ALTER TABLE stored_keys ADD COLUMN has_extra_password INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE stored_keys ADD COLUMN extra_salt BLOB",
             "ALTER TABLE stored_keys ADD COLUMN extra_nonce BLOB",
+            "ALTER TABLE stored_keys ADD COLUMN metadata_ciphertext BLOB",
+            "ALTER TABLE stored_keys ADD COLUMN metadata_nonce BLOB",
         ];
         for stmt in statements {
-            // Lỗi ở đây (nếu có) luôn là "duplicate column name" vì cột
-            // đã tồn tại -> an toàn để bỏ qua, không cần log.
             let _ = self.conn.execute(stmt, []);
         }
     }
@@ -143,12 +191,12 @@ impl Storage {
         self.conn
             .execute(
                 "INSERT INTO stored_keys
-                 (id, name, key_type, ciphertext, nonce, tags, notes, created_at, updated_at,
+                 (id, metadata_ciphertext, metadata_nonce, ciphertext, nonce, created_at, updated_at,
                   has_extra_password, extra_salt, extra_nonce)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
-                    row.id, row.name, row.key_type, row.ciphertext, row.nonce,
-                    row.tags, row.notes, row.created_at, row.updated_at,
+                    row.id, row.metadata_ciphertext, row.metadata_nonce, row.ciphertext, row.nonce,
+                    row.created_at, row.updated_at,
                     row.has_extra_password, row.extra_salt, row.extra_nonce
                 ],
             )
@@ -159,33 +207,31 @@ impl Storage {
     pub fn get_key_row(&self, id: &str) -> Result<StoredKeyRow, String> {
         self.conn
             .query_row(
-                "SELECT id, name, key_type, ciphertext, nonce, tags, notes, created_at, updated_at,
+                "SELECT id, metadata_ciphertext, metadata_nonce, ciphertext, nonce, created_at, updated_at,
                         has_extra_password, extra_salt, extra_nonce
                  FROM stored_keys WHERE id = ?1",
                 params![id],
                 |row| {
                     Ok(StoredKeyRow {
                         id: row.get(0)?,
-                        name: row.get(1)?,
-                        key_type: row.get(2)?,
+                        metadata_ciphertext: row.get(1)?,
+                        metadata_nonce: row.get(2)?,
                         ciphertext: row.get(3)?,
                         nonce: row.get(4)?,
-                        tags: row.get(5)?,
-                        notes: row.get(6)?,
-                        created_at: row.get(7)?,
-                        updated_at: row.get(8)?,
-                        has_extra_password: row.get(9)?,
-                        extra_salt: row.get(10)?,
-                        extra_nonce: row.get(11)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                        has_extra_password: row.get(7)?,
+                        extra_salt: row.get(8)?,
+                        extra_nonce: row.get(9)?,
                     })
                 },
             )
             .map_err(|e| crate::error::internal_error("db_get_key", e))
     }
 
-    /// Cập nhật lại phần mã hóa của 1 key (dùng khi thêm/gỡ/đổi mật khẩu
-    /// riêng — nội dung được giải mã rồi mã hóa lại theo lớp mới, các
-    /// trường khác như tên/tags/notes giữ nguyên).
+    /// Cập nhật lại phần mã hóa của NỘI DUNG key (dùng khi thêm/gỡ/đổi
+    /// mật khẩu riêng — chỉ động vào ciphertext/nonce của secret, không
+    /// đụng tới metadata).
     pub fn update_key_encryption(
         &self,
         id: &str,
@@ -213,30 +259,28 @@ impl Storage {
         Ok(())
     }
 
-    /// Danh sách rút gọn — KHÔNG lấy ciphertext, tránh giữ dữ liệu mã hóa
-    /// trong bộ nhớ khi không cần thiết.
-    pub fn list_key_summaries(&self) -> Result<Vec<KeySummary>, String> {
+    /// Danh sách rút gọn cho list view — chỉ lấy metadata đã mã hóa,
+    /// KHÔNG lấy ciphertext của secret.
+    pub fn list_key_meta_rows(&self) -> Result<Vec<StoredKeyMetaRow>, String> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, name, key_type, tags, notes, created_at, updated_at, has_extra_password
-                 FROM stored_keys ORDER BY updated_at DESC",
+                "SELECT id, metadata_ciphertext, metadata_nonce, created_at, updated_at, has_extra_password
+                 FROM stored_keys
+                 WHERE metadata_ciphertext IS NOT NULL
+                 ORDER BY updated_at DESC",
             )
             .map_err(|e| crate::error::internal_error("db_prepare_query", e))?;
 
         let rows = stmt
             .query_map([], |row| {
-                let tags_json: String = row.get(3)?;
-                let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-                Ok(KeySummary {
+                Ok(StoredKeyMetaRow {
                     id: row.get(0)?,
-                    name: row.get(1)?,
-                    key_type: row.get(2)?,
-                    tags,
-                    notes: row.get(4)?,
-                    created_at: row.get(5)?,
-                    updated_at: row.get(6)?,
-                    has_extra_password: row.get(7)?,
+                    metadata_ciphertext: row.get(1)?,
+                    metadata_nonce: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                    has_extra_password: row.get(5)?,
                 })
             })
             .map_err(|e| crate::error::internal_error("db_query_map", e))?;
@@ -253,6 +297,55 @@ impl Storage {
         if affected == 0 {
             return Err("ERR_KEY_NOT_FOUND".to_string());
         }
+        Ok(())
+    }
+
+    // ---------- migration dữ liệu cũ (metadata plaintext -> mã hóa) ----------
+
+    /// Các key được tạo trước bản vá mã hóa metadata sẽ có
+    /// metadata_ciphertext = NULL. Trả về danh sách này kèm dữ liệu
+    /// plaintext CŨ để lớp commands (có vault_key) mã hóa lại.
+    pub fn list_legacy_plaintext_rows(&self) -> Result<Vec<LegacyKeyRow>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, key_type, tags, notes FROM stored_keys WHERE metadata_ciphertext IS NULL")
+            .map_err(|e| crate::error::internal_error("db_prepare_query", e))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(LegacyKeyRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    key_type: row.get(2)?,
+                    tags: row.get(3)?,
+                    notes: row.get(4)?,
+                })
+            })
+            .map_err(|e| crate::error::internal_error("db_query_map", e))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| crate::error::internal_error("db_collect_rows", e))
+    }
+
+    /// Ghi metadata đã mã hóa vào 1 row, đồng thời XÓA SẠCH plaintext cũ
+    /// (ghi đè '' / NULL) trong cùng 1 câu UPDATE — không để lọt khoảnh
+    /// khắc nào mà cả 2 bản (plaintext cũ + ciphertext mới) cùng tồn tại
+    /// lâu hơn cần thiết.
+    pub fn finish_migrate_key_metadata(
+        &self,
+        id: &str,
+        metadata_ciphertext: &[u8],
+        metadata_nonce: &[u8],
+    ) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE stored_keys
+                 SET metadata_ciphertext = ?1, metadata_nonce = ?2,
+                     name = '', key_type = '', tags = '[]', notes = NULL
+                 WHERE id = ?3",
+                params![metadata_ciphertext, metadata_nonce, id],
+            )
+            .map_err(|e| crate::error::internal_error("db_migrate_metadata", e))?;
         Ok(())
     }
 
@@ -276,12 +369,10 @@ mod tests {
     fn sample_row(id: &str) -> StoredKeyRow {
         StoredKeyRow {
             id: id.to_string(),
-            name: "Test Key".to_string(),
-            key_type: "ssh".to_string(),
+            metadata_ciphertext: vec![100, 101, 102],
+            metadata_nonce: vec![103, 104],
             ciphertext: vec![1, 2, 3, 4],
             nonce: vec![5, 6, 7],
-            tags: "[\"prod\"]".to_string(),
-            notes: Some("ghi chu".to_string()),
             created_at: 1000,
             updated_at: 1000,
             has_extra_password: false,
@@ -297,6 +388,56 @@ mod tests {
             extra_nonce: Some(vec![8, 8, 8]),
             ..sample_row(id)
         }
+    }
+
+    #[test]
+    fn export_to_creates_readable_copy() {
+        let dir = std::env::temp_dir().join(format!("vault_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let export_path = dir.join("exported.db");
+
+        let storage = Storage::open_in_memory().unwrap();
+        storage.insert_key(&sample_row("key-1")).unwrap();
+        storage
+            .save_vault_meta(b"salt", b"evk", b"nonce", "{}")
+            .unwrap();
+
+        storage.export_to(export_path.to_str().unwrap()).unwrap();
+
+        // Mở lại file vừa export như 1 DB độc lập, phải đọc được đúng dữ liệu
+        let reopened = Storage::open(export_path.to_str().unwrap()).unwrap();
+        assert!(reopened.has_vault().unwrap());
+        let fetched = reopened.get_key_row("key-1").unwrap();
+        assert_eq!(fetched.ciphertext, vec![1, 2, 3, 4]);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reload_picks_up_externally_replaced_file() {
+        let dir = std::env::temp_dir().join(format!("vault_test_reload_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("reload.db");
+        let path_str = path.to_str().unwrap();
+
+        let storage = Storage::open(path_str).unwrap();
+        storage.insert_key(&sample_row("key-a")).unwrap();
+        drop(storage);
+
+        // Giả lập "import": ghi đè file bằng 1 DB B hoàn toàn khác (tạo
+        // riêng rồi export vào đúng path đó)
+        let storage_b = Storage::open_in_memory().unwrap();
+        storage_b.insert_key(&sample_row("key-b")).unwrap();
+        storage_b.export_to(path_str).unwrap();
+
+        // Mở lại storage A (đang trỏ vào path đó) và reload()
+        let mut storage_a_again = Storage::open(path_str).unwrap();
+        storage_a_again.reload().unwrap();
+
+        // Phải thấy dữ liệu của DB B, không phải DB A cũ
+        assert!(storage_a_again.get_key_row("key-b").is_ok());
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -318,6 +459,17 @@ mod tests {
     }
 
     #[test]
+    fn insert_and_get_key() {
+        let storage = Storage::open_in_memory().unwrap();
+        let row = sample_row("key-1");
+        storage.insert_key(&row).unwrap();
+
+        let fetched = storage.get_key_row("key-1").unwrap();
+        assert_eq!(fetched.metadata_ciphertext, vec![100, 101, 102]);
+        assert_eq!(fetched.ciphertext, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
     fn insert_and_get_key_with_extra_password() {
         let storage = Storage::open_in_memory().unwrap();
         let row = sample_row_with_extra_password("key-extra");
@@ -330,17 +482,66 @@ mod tests {
     }
 
     #[test]
-    fn list_summaries_reports_has_extra_password_correctly() {
+    fn list_meta_rows_excludes_unmigrated_legacy_keys() {
         let storage = Storage::open_in_memory().unwrap();
         storage.insert_key(&sample_row("key-normal")).unwrap();
-        storage.insert_key(&sample_row_with_extra_password("key-extra")).unwrap();
 
-        let summaries = storage.list_key_summaries().unwrap();
-        let normal = summaries.iter().find(|k| k.id == "key-normal").unwrap();
-        let extra = summaries.iter().find(|k| k.id == "key-extra").unwrap();
+        // Giả lập 1 key CŨ (metadata_ciphertext = NULL) chèn thẳng qua SQL,
+        // bỏ qua insert_key (vốn luôn set metadata_ciphertext).
+        storage
+            .conn
+            .execute(
+                "INSERT INTO stored_keys (id, ciphertext, nonce, created_at, updated_at, name, key_type, tags)
+                 VALUES ('key-legacy', X'0102', X'0304', 1000, 1000, 'Ten cu', 'ssh', '[\"prod\"]')",
+                [],
+            )
+            .unwrap();
 
-        assert!(!normal.has_extra_password);
-        assert!(extra.has_extra_password);
+        let summaries = storage.list_key_meta_rows().unwrap();
+        // Key legacy chưa migrate -> không xuất hiện trong list bình thường
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, "key-normal");
+    }
+
+    #[test]
+    fn legacy_migration_flow() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage
+            .conn
+            .execute(
+                "INSERT INTO stored_keys (id, ciphertext, nonce, created_at, updated_at, name, key_type, tags, notes)
+                 VALUES ('key-legacy', X'0102', X'0304', 1000, 1000, 'Ten cu bi lo', 'ssh', '[\"prod\"]', 'ghi chu cu')",
+                [],
+            )
+            .unwrap();
+
+        let legacy = storage.list_legacy_plaintext_rows().unwrap();
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].name, "Ten cu bi lo");
+        assert_eq!(legacy[0].notes, Some("ghi chu cu".to_string()));
+
+        storage
+            .finish_migrate_key_metadata("key-legacy", &[200, 201], &[202])
+            .unwrap();
+
+        // Sau khi migrate: không còn trong danh sách legacy nữa
+        let legacy_after = storage.list_legacy_plaintext_rows().unwrap();
+        assert_eq!(legacy_after.len(), 0);
+
+        // Và đã xuất hiện trong list bình thường với metadata đã mã hóa
+        let summaries = storage.list_key_meta_rows().unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].metadata_ciphertext, vec![200, 201]);
+
+        // Plaintext cũ đã bị xóa sạch (đọc thẳng qua SQL để chắc chắn)
+        let (name, notes): (String, Option<String>) = storage
+            .conn
+            .query_row("SELECT name, notes FROM stored_keys WHERE id = 'key-legacy'", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(name, "");
+        assert_eq!(notes, None);
     }
 
     #[test]
@@ -357,8 +558,8 @@ mod tests {
         assert_eq!(fetched.ciphertext, vec![10, 11, 12]);
         assert_eq!(fetched.extra_salt, Some(vec![1, 2]));
         assert_eq!(fetched.updated_at, 2000);
-        // Các trường không liên quan (name, tags) phải giữ nguyên
-        assert_eq!(fetched.name, "Test Key");
+        // metadata không bị đụng tới khi chỉ update encryption của secret
+        assert_eq!(fetched.metadata_ciphertext, vec![100, 101, 102]);
     }
 
     #[test]
@@ -384,28 +585,6 @@ mod tests {
     }
 
     #[test]
-    fn insert_and_get_key() {
-        let storage = Storage::open_in_memory().unwrap();
-        let row = sample_row("key-1");
-        storage.insert_key(&row).unwrap();
-
-        let fetched = storage.get_key_row("key-1").unwrap();
-        assert_eq!(fetched.name, "Test Key");
-        assert_eq!(fetched.ciphertext, vec![1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn list_summaries_does_not_error_and_hides_no_secret_fields() {
-        let storage = Storage::open_in_memory().unwrap();
-        storage.insert_key(&sample_row("key-1")).unwrap();
-        storage.insert_key(&sample_row("key-2")).unwrap();
-
-        let summaries = storage.list_key_summaries().unwrap();
-        assert_eq!(summaries.len(), 2);
-        assert_eq!(summaries[0].tags, vec!["prod".to_string()]);
-    }
-
-    #[test]
     fn delete_key_removes_it() {
         let storage = Storage::open_in_memory().unwrap();
         storage.insert_key(&sample_row("key-1")).unwrap();
@@ -419,6 +598,6 @@ mod tests {
     fn delete_nonexistent_key_errors() {
         let storage = Storage::open_in_memory().unwrap();
         let result = storage.delete_key("khong-ton-tai");
-        assert!(result.is_err());
+        assert_eq!(result, Err("ERR_KEY_NOT_FOUND".to_string()));
     }
 }

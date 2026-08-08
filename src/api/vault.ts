@@ -4,6 +4,7 @@
 // từ file này — giúp dễ đổi backend sau này và dễ mock khi test UI.
 
 import { invoke } from '@tauri-apps/api/core';
+import { save, open } from '@tauri-apps/plugin-dialog';
 import type { KeySummary, KeyWithSecret, NewKeyInput } from '../types';
 
 export async function vaultExists(): Promise<boolean> {
@@ -68,6 +69,74 @@ export async function changeKeyPassword(
   newKeyPassword: string
 ): Promise<void> {
   return invoke('cmd_change_key_password', { id, currentKeyPassword, newKeyPassword });
+}
+
+// ---------- Export / Import vault ----------
+//
+// Chọn đường dẫn (dialog native) tách riêng khỏi lệnh gọi Rust thực sự,
+// để dễ test/tái dùng và để component tự quyết định khi nào hỏi đường dẫn.
+
+/// Mở dialog "Save" để chọn nơi lưu file export. Trả về null nếu người
+/// dùng bấm Cancel.
+export async function pickExportDestination(dialogTitle: string, filterName: string): Promise<string | null> {
+  const path = await save({
+    title: dialogTitle,
+    defaultPath: 'vault-backup.db',
+    filters: [{ name: filterName, extensions: ['db'] }],
+  });
+  return path ?? null;
+}
+
+/// Mở dialog "Open" để chọn file vault cần import. Trả về null nếu
+/// người dùng bấm Cancel.
+export async function pickImportSource(dialogTitle: string, filterName: string): Promise<string | null> {
+  const selected = await open({
+    title: dialogTitle,
+    multiple: false,
+    filters: [{ name: filterName, extensions: ['db'] }],
+  });
+  if (!selected || Array.isArray(selected)) return null;
+  return selected;
+}
+
+export async function exportVault(destPath: string): Promise<void> {
+  return invoke('cmd_export_vault', { destPath });
+}
+
+export async function importVault(srcPath: string): Promise<void> {
+  return invoke('cmd_import_vault', { srcPath });
+}
+
+// ---------- Đổi vị trí vault đang dùng (move/link) ----------
+
+export async function getDbPath(): Promise<string> {
+  return invoke('cmd_get_db_path');
+}
+
+export async function setDbPath(newPath: string, mode: 'move' | 'link'): Promise<void> {
+  return invoke('cmd_set_db_path', { newPath, mode });
+}
+
+/// Dialog "Save" để chọn nơi DI CHUYỂN vault hiện tại tới.
+export async function pickMoveDestination(dialogTitle: string, filterName: string): Promise<string | null> {
+  const path = await save({
+    title: dialogTitle,
+    defaultPath: 'vault.db',
+    filters: [{ name: filterName, extensions: ['db'] }],
+  });
+  return path ?? null;
+}
+
+/// Dialog "Open" để chọn 1 file vault ĐÃ CÓ SẴN để liên kết trực tiếp
+/// (không copy).
+export async function pickLinkSource(dialogTitle: string, filterName: string): Promise<string | null> {
+  const selected = await open({
+    title: dialogTitle,
+    multiple: false,
+    filters: [{ name: filterName, extensions: ['db'] }],
+  });
+  if (!selected || Array.isArray(selected)) return null;
+  return selected;
 }
 
 /// Rút gọn lỗi trả về từ Rust (thường đã là string dễ đọc) thành message

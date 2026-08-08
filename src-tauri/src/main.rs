@@ -1,5 +1,6 @@
 // src-tauri/src/main.rs
 
+mod app_config;
 mod crypto;
 mod error;
 mod models;
@@ -8,12 +9,13 @@ mod commands;
 
 use vault::state::VaultState;
 use vault::storage::Storage;
-use commands::auth::StorageState;
+use commands::auth::{StorageState, AppPaths};
 use std::sync::Mutex;
 use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(VaultState::new())
         .setup(|app| {
             // QUAN TRỌNG: không lưu DB trong thư mục src-tauri (đường dẫn
@@ -34,11 +36,15 @@ fn main() {
             std::fs::create_dir_all(&app_data_dir)
                 .expect("Không tạo được thư mục app_data_dir");
 
-            let db_path = app_data_dir.join("vault.db");
-            let db_path_str = db_path.to_str().expect("Đường dẫn DB không hợp lệ");
+            // Đường dẫn thực sự có thể KHÁC vị trí mặc định nếu người dùng
+            // đã từng "di chuyển"/"liên kết" sang vault khác qua Settings
+            // (xem cmd_set_db_path) — resolve_db_path đọc app_config.json
+            // để biết, fallback về mặc định nếu chưa từng đổi.
+            let db_path = app_config::resolve_db_path(&app_data_dir);
 
-            let storage = Storage::open(db_path_str).expect("Không mở được database");
+            let storage = Storage::open(&db_path).expect("Không mở được database");
             app.manage(StorageState(Mutex::new(storage)));
+            app.manage(AppPaths { app_data_dir });
 
             Ok(())
         })
@@ -50,6 +56,10 @@ fn main() {
             commands::auth::cmd_is_unlocked,
             commands::auth::cmd_change_password,
             commands::auth::cmd_set_auto_lock_timeout,
+            commands::auth::cmd_export_vault,
+            commands::auth::cmd_import_vault,
+            commands::auth::cmd_get_db_path,
+            commands::auth::cmd_set_db_path,
             commands::keys::cmd_add_key,
             commands::keys::cmd_list_keys,
             commands::keys::cmd_get_key_secret,

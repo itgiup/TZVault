@@ -80,7 +80,10 @@ function AppInner() {
     return (
       <div className="vault-app">
         {floatingControls}
-        <SetupScreen onSetupComplete={() => setState(APP_STATES.unlocked)} />
+        <SetupScreen
+          onSetupComplete={() => setState(APP_STATES.unlocked)}
+          onImportComplete={() => setState(APP_STATES.locked)}
+        />
       </div>
     );
   }
