@@ -100,6 +100,11 @@ pub fn cmd_add_key(
 /// Lấy danh sách key (KHÔNG bao gồm giá trị bí mật) — dùng cho màn hình
 /// list. Metadata được giải mã ở đây (cần vault_key), storage.rs chỉ trả
 /// về ciphertext thô.
+///
+/// LƯU Ý: nếu 1 row cụ thể decrypt lỗi (VD dữ liệu từ vault khác lẫn vào,
+/// hoặc bị hỏng), CHỦ ĐỘNG BỎ QUA row đó thay vì làm fail toàn bộ danh
+/// sách — người dùng vẫn thấy được các key hợp lệ khác, thay vì màn hình
+/// trắng không rõ lý do. Lỗi chi tiết vẫn được log ra stderr để debug.
 #[tauri::command]
 pub fn cmd_list_keys(
     storage: State<StorageState>,
@@ -110,22 +115,33 @@ pub fn cmd_list_keys(
 
     let meta_rows = db.list_key_meta_rows()?;
 
-    meta_rows
+    let summaries = meta_rows
         .into_iter()
-        .map(|row| {
-            let metadata = decrypt_row_metadata(&vault_key, &row.id, &row.metadata_ciphertext, &row.metadata_nonce)?;
-            Ok(KeySummary {
-                id: row.id,
-                name: metadata.name,
-                key_type: metadata.key_type,
-                tags: metadata.tags,
-                notes: metadata.notes,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-                has_extra_password: row.has_extra_password,
-            })
+        .filter_map(|row| {
+            match decrypt_row_metadata(&vault_key, &row.id, &row.metadata_ciphertext, &row.metadata_nonce) {
+                Ok(metadata) => Some(KeySummary {
+                    id: row.id,
+                    name: metadata.name,
+                    key_type: metadata.key_type,
+                    tags: metadata.tags,
+                    notes: metadata.notes,
+                    created_at: row.created_at,
+                    updated_at: row.updated_at,
+                    has_extra_password: row.has_extra_password,
+                }),
+                Err(_) => {
+                    eprintln!(
+                        "[internal error] cmd_list_keys: bỏ qua key id={} vì decrypt metadata thất bại \
+                         (không khớp vault_key hiện tại, hoặc dữ liệu hỏng)",
+                        row.id
+                    );
+                    None
+                }
+            }
         })
-        .collect()
+        .collect();
+
+    Ok(summaries)
 }
 
 /// Lấy giá trị thật của 1 key — chỉ dùng cho key KHÔNG có mật khẩu riêng.

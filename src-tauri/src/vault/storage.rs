@@ -192,8 +192,8 @@ impl Storage {
             .execute(
                 "INSERT INTO stored_keys
                  (id, metadata_ciphertext, metadata_nonce, ciphertext, nonce, created_at, updated_at,
-                  has_extra_password, extra_salt, extra_nonce)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                  has_extra_password, extra_salt, extra_nonce, name, key_type, tags, notes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, '', '', '[]', NULL)",
                 params![
                     row.id, row.metadata_ciphertext, row.metadata_nonce, row.ciphertext, row.nonce,
                     row.created_at, row.updated_at,
@@ -438,6 +438,45 @@ mod tests {
         assert!(storage_a_again.get_key_row("key-b").is_ok());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn insert_key_works_on_legacy_table_without_column_defaults() {
+        // Tái hiện chính xác lỗi thực tế: bảng được tạo bởi bản app CŨ,
+        // khi `name`/`key_type` là NOT NULL nhưng KHÔNG có DEFAULT.
+        // CREATE TABLE IF NOT EXISTS ở init_schema() không sửa được
+        // constraint này trên bảng đã tồn tại — insert_key() phải tự ghi
+        // rõ giá trị cho các cột đó, không được phụ thuộc vào DEFAULT.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE stored_keys (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                key_type TEXT NOT NULL,
+                ciphertext BLOB NOT NULL,
+                nonce BLOB NOT NULL,
+                tags TEXT NOT NULL DEFAULT '[]',
+                notes TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            "#,
+        )
+        .unwrap();
+
+        let storage = Storage { conn, db_path: ":memory:".to_string() };
+        // Chạy lại init_schema() để nó tự ALTER TABLE thêm các cột mới
+        // (giống hệt luồng thật khi app mở 1 DB cũ đã tồn tại).
+        storage.init_schema().unwrap();
+
+        // Đây chính là thao tác trước đây bị lỗi "NOT NULL constraint
+        // failed: stored_keys.name" — giờ phải chạy được bình thường.
+        let result = storage.insert_key(&sample_row("key-1"));
+        assert!(result.is_ok(), "insert_key phải thành công trên bảng cũ: {:?}", result);
+
+        let fetched = storage.get_key_row("key-1").unwrap();
+        assert_eq!(fetched.ciphertext, vec![1, 2, 3, 4]);
     }
 
     #[test]
