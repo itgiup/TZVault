@@ -3,6 +3,11 @@
 use serde::{Deserialize, Serialize};
 
 /// Loại private key được hỗ trợ.
+///
+/// Hiện tại `key_type` được truyền qua String thô (khớp trực tiếp với
+/// giá trị JS gửi lên) thay vì parse qua enum này — giữ enum lại làm
+/// tài liệu tham khảo và để validate chặt hơn khi cần trong tương lai.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyType {
@@ -13,6 +18,7 @@ pub enum KeyType {
     Other,
 }
 
+#[allow(dead_code)]
 impl KeyType {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -24,7 +30,7 @@ impl KeyType {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_key_type(s: &str) -> Self {
         match s {
             "ssh" => KeyType::Ssh,
             "crypto_wallet" => KeyType::CryptoWallet,

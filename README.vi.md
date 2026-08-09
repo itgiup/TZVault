@@ -210,6 +210,8 @@ Lựa chọn vị trí (Move/Link) được lưu vào `app_config.json` (cạnh 
 - [ ] **Auto-update có ký số** (`tauri-plugin-updater`) — để vá lỗi bảo mật nhanh cho người dùng đã cài.
 - [ ] Cân nhắc **bug bounty program** khi ra mắt công khai.
 
+**Tình trạng dependency**: chạy `cargo audit` (trong `src-tauri/`) để kiểm tra dependency có lỗ hổng đã biết không. Một số cảnh báo dạng `unmaintained`/`unsound` (không khai thác được) đã được đánh giá và ghi lại lý do rõ ràng trong [`src-tauri/.cargo/audit.toml`](./src-tauri/.cargo/audit.toml) — chủ yếu là binding GTK3 mà Tauri kéo vào cho Linux. Vui lòng kiểm tra file đó trước khi báo lại các mục này; phát hiện thật sự mới vẫn luôn được hoan nghênh.
+
 ## Câu hỏi thường gặp khi dev
 
 **App tự tắt/bật liên tục khi đang `tauri dev`?**

@@ -213,6 +213,8 @@ This is an actively developed project and **has not gone through an independent 
 - [ ] **Signed auto-updates** (`tauri-plugin-updater`) — to ship security fixes quickly to existing installs.
 - [ ] Consider a **bug bounty program** at public launch.
 
+**Dependency posture**: run `cargo audit` (from `src-tauri/`) to check for known-vulnerable dependencies. A small number of `unmaintained`/`unsound` (not exploitable) advisories are already reviewed and tracked with justification in [`src-tauri/.cargo/audit.toml`](./src-tauri/.cargo/audit.toml) — mostly transitive GTK3 bindings pulled in by Tauri's Linux backend. Please check that file before re-reporting one of these; genuinely new findings are still very welcome.
+
 ## Dev FAQ
 
 **The app keeps closing and reopening while running `tauri dev`?**

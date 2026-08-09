@@ -29,6 +29,10 @@ impl Storage {
     }
 
     /// Dùng cho unit test: DB tồn tại hoàn toàn trong RAM, không ghi ra đĩa.
+    /// clippy coi đây là "chưa dùng" khi build ở chế độ không-test vì chỉ
+    /// được gọi trong `#[cfg(test)] mod tests` bên dưới — đó là dùng đúng
+    /// mục đích thiết kế, không phải dead code thật.
+    #[allow(dead_code)]
     pub fn open_in_memory() -> Result<Self, String> {
         let conn = Connection::open_in_memory().map_err(|e| crate::error::internal_error("db_open", e))?;
         let storage = Storage { conn, db_path: ":memory:".to_string() };
@@ -168,6 +172,12 @@ impl Storage {
     }
 
     /// Trả về (salt, encrypted_vault_key, vault_key_nonce, kdf_params_json)
+    ///
+    /// clippy chê type tuple này phức tạp — đúng, nhưng tách thành struct
+    /// riêng sẽ phải sửa theo ở mọi call site (commands/auth.rs), rủi ro
+    /// hơn lợi ích ở quy mô hàm nội bộ, chỉ 1 nơi gọi. Cân nhắc refactor
+    /// nếu sau này có thêm field hoặc thêm chỗ gọi.
+    #[allow(clippy::type_complexity)]
     pub fn load_vault_meta(&self) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, String), String> {
         self.conn
             .query_row(
@@ -232,6 +242,11 @@ impl Storage {
     /// Cập nhật lại phần mã hóa của NỘI DUNG key (dùng khi thêm/gỡ/đổi
     /// mật khẩu riêng — chỉ động vào ciphertext/nonce của secret, không
     /// đụng tới metadata).
+    ///
+    /// 8 tham số vượt ngưỡng mặc định của clippy (7) — đều là dữ liệu
+    /// liên quan chặt tới nhau (kết quả của 1 lần mã hóa lại), gộp thành
+    /// struct sẽ không rõ ràng hơn bao nhiêu ở quy mô hiện tại.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_key_encryption(
         &self,
         id: &str,

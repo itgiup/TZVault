@@ -84,7 +84,9 @@ pub fn decrypt(
 }
 
 /// Helper: mã hóa một chuỗi String (VD: nội dung private key dạng text)
-/// và tự động xóa plaintext khỏi RAM sau khi xong.
+/// và tự động xóa plaintext khỏi RAM sau khi xong. Chưa được gọi ở đâu
+/// trong luồng hiện tại — giữ lại làm phương án nâng cấp an toàn hơn.
+#[allow(dead_code)]
 pub fn encrypt_string_and_wipe(
     key: &[u8; 32],
     mut plaintext: String,

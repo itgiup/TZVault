@@ -74,7 +74,10 @@ pub fn derive_key(
 }
 
 /// Wrapper an toàn: xóa password khỏi memory ngay sau khi dùng xong.
-/// Gọi hàm này thay vì derive_key trực tiếp khi có thể.
+/// Chưa được gọi ở đâu trong luồng hiện tại (các command đang dùng
+/// derive_key() trực tiếp) — giữ lại làm phương án nâng cấp an toàn hơn
+/// sau này, không xóa vì đây là utility bảo mật hợp lệ.
+#[allow(dead_code)]
 pub fn derive_key_and_wipe(
     mut password: String,
     salt: &[u8],
