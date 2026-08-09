@@ -1,24 +1,35 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# Dependencies
+node_modules/
 
-node_modules
-dist
-dist-ssr
-*.local
+# Build output
+dist/
+dist-ssr/
+src-tauri/target/
 
-# Editor directories and files
+# Vault data - PHÒNG HỜ. Về mặt thiết kế, vault.db không bao giờ nằm
+# trong repo (lưu ở app_data_dir của OS, xem main.rs), nhưng thêm dòng
+# này để chặn tuyệt đối trường hợp ai đó lỡ tạo file test ngay trong
+# thư mục project.
+*.db
+*.db-wal
+*.db-shm
+app_config.json
+
+# Env / secrets
+.env
+.env.*
+
+# Editor / OS
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Tauri generated (tự sinh lại lúc build, không cần commit)
+src-tauri/gen/
