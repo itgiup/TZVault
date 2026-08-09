@@ -1,5 +1,5 @@
 git add .
-git commit -m "audit cargo.
+git commit -m "audit pnpm
 "
 git push
 # /home/<user>/.local/share/com.u.tauri-app
