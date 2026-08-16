@@ -24,6 +24,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "itgiup",
+    "homepage": "https://github.com/itgiup/TZVault",
+    "shortDescription": "Encrypted local private key manager",
+    "longDescription": "TZVault stores SSH keys, crypto wallets, PGP keys, and API keys, encrypting everything locally with AES-256-GCM before it touches disk.",
+    "copyright": "Copyright (c) 2026 itgiup",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

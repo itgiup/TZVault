@@ -1,5 +1,5 @@
 git add .
-git commit -m "COMMUNITY_OUTREACH"
+git commit -m "icons"
 git push
 # /home/<user>/.local/share/com.u.tauri-app
 
