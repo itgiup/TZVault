@@ -1,6 +1,5 @@
 git add .
-git commit -m "audit pnpm
-"
+git commit -m "COMMUNITY_OUTREACH"
 git push
 # /home/<user>/.local/share/com.u.tauri-app
 

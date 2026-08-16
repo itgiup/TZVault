@@ -33,3 +33,5 @@ pnpm-debug.log*
 
 # Tauri generated (tự sinh lại lúc build, không cần commit)
 src-tauri/gen/
+
+COMMUNITY_OUTREACH.md
