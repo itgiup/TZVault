@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { addKey } from '../api/vault';
-import { translateError, getKeyTypeLabels } from '../i18n/translations';
+import { translateError, getKeyTypeLabels, getSecretPlaceholder } from '../i18n/translations';
 import { useI18n } from '../i18n/LanguageContext';
 import type { KeyType } from '../types';
 import { Modal, useModalClose } from './Modal';
@@ -91,11 +91,19 @@ function AddKeyModalContent({ onAdded }: { onAdded: () => void }) {
         <div className="field">
           <label htmlFor="key-type">{t.keyTypeLabel}</label>
           <select id="key-type" value={keyType} onChange={(e) => setKeyType(e.target.value as KeyType)}>
-            {(Object.entries(keyTypeLabels) as [KeyType, string][]).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
+            <option value="ssh">{keyTypeLabels.ssh}</option>
+            <optgroup label={t.cryptoWalletGroupLabel}>
+              <option value="crypto_seed_phrase">{keyTypeLabels.crypto_seed_phrase}</option>
+              <option value="crypto_private_key_hex">{keyTypeLabels.crypto_private_key_hex}</option>
+              <option value="crypto_wif">{keyTypeLabels.crypto_wif}</option>
+              <option value="crypto_xprv">{keyTypeLabels.crypto_xprv}</option>
+              <option value="crypto_solana">{keyTypeLabels.crypto_solana}</option>
+              <option value="crypto_keystore_json">{keyTypeLabels.crypto_keystore_json}</option>
+              <option value="crypto_wallet">{keyTypeLabels.crypto_wallet}</option>
+            </optgroup>
+            <option value="pgp">{keyTypeLabels.pgp}</option>
+            <option value="api_key">{keyTypeLabels.api_key}</option>
+            <option value="other">{keyTypeLabels.other}</option>
           </select>
         </div>
 
@@ -105,7 +113,7 @@ function AddKeyModalContent({ onAdded }: { onAdded: () => void }) {
             id="key-secret"
             value={secretValue}
             onChange={(e) => setSecretValue(e.target.value)}
-            placeholder={t.secretPlaceholder}
+            placeholder={getSecretPlaceholder(t, keyType)}
             spellCheck={false}
           />
         </div>

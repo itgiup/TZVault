@@ -1,5 +1,5 @@
 git add .
-git commit -m "icons"
+git commit -m "thêm các loại key để lưu"
 git push
 # /home/<user>/.local/share/com.u.tauri-app
 

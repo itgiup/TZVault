@@ -52,13 +52,18 @@ export function KeyDetail({ summary, onDeleted, onUpdated }: KeyDetailProps) {
     setCopyLabel(t.copiedBtn);
 
     setTimeout(async () => {
+      // KHÔNG dùng navigator.clipboard.readText() để kiểm tra trước khi
+      // xóa — API này thường bị webview chặn âm thầm (đặc biệt khi cửa
+      // sổ mất focus), khiến việc xóa không bao giờ chạy dù trông như
+      // đã xong. Luôn xóa vô điều kiện, giống cách Bitwarden/1Password
+      // làm — đánh đổi nhỏ (có thể xóa nhầm thứ khác người dùng vừa copy
+      // trong 20s đó) để đổi lấy đảm bảo secret luôn được dọn khỏi
+      // clipboard, không phụ thuộc vào 1 API không ổn định.
       try {
-        const current = await navigator.clipboard.readText();
-        if (current === value) {
-          await navigator.clipboard.writeText('');
-        }
+        await navigator.clipboard.writeText('');
       } catch {
-        // Trình duyệt/OS có thể chặn đọc clipboard — bỏ qua an toàn
+        // Trường hợp hiếm: writeText cũng bị chặn (VD cửa sổ mất focus
+        // hoàn toàn) — không có gì thêm để làm, bỏ qua an toàn.
       }
       setCopyLabel(t.copyBtn);
     }, CLIPBOARD_CLEAR_MS);

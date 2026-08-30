@@ -1,7 +1,18 @@
 // src/types.ts
 // Khớp chính xác với các struct trong src-tauri/src/models.rs
 
-export type KeyType = 'ssh' | 'crypto_wallet' | 'pgp' | 'api_key' | 'other';
+export type KeyType =
+  | 'ssh'
+  | 'crypto_wallet' // giữ lại để tương thích ngược với key đã lưu trước đây
+  | 'crypto_seed_phrase'
+  | 'crypto_private_key_hex'
+  | 'crypto_wif'
+  | 'crypto_keystore_json'
+  | 'crypto_xprv'
+  | 'crypto_solana'
+  | 'pgp'
+  | 'api_key'
+  | 'other';
 
 export interface KeySummary {
   id: string;

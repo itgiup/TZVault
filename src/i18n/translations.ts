@@ -140,9 +140,22 @@ export interface Translations {
   // Key types
   keyTypeSsh: string;
   keyTypeCryptoWallet: string;
+  cryptoWalletGroupLabel: string;
+  keyTypeSeedPhrase: string;
+  keyTypePrivateKeyHex: string;
+  keyTypeWif: string;
+  keyTypeKeystoreJson: string;
+  keyTypeXprv: string;
+  keyTypeSolana: string;
   keyTypePgp: string;
   keyTypeApiKey: string;
   keyTypeOther: string;
+  secretPlaceholderSeedPhrase: string;
+  secretPlaceholderPrivateKeyHex: string;
+  secretPlaceholderWif: string;
+  secretPlaceholderKeystoreJson: string;
+  secretPlaceholderXprv: string;
+  secretPlaceholderSolana: string;
 
   // App init
   connectErrorPrefix: string;
@@ -289,10 +302,23 @@ const en: Translations = {
   vaultRelocateWarning: "You'll need to unlock again after this.",
 
   keyTypeSsh: 'SSH Key',
-  keyTypeCryptoWallet: 'Crypto Wallet',
+  keyTypeCryptoWallet: 'Crypto Wallet (Other)',
+  cryptoWalletGroupLabel: 'Crypto Wallet',
+  keyTypeSeedPhrase: 'Seed Phrase (Mnemonic)',
+  keyTypePrivateKeyHex: 'Private Key (Hex, EVM)',
+  keyTypeWif: 'Private Key (WIF, Bitcoin)',
+  keyTypeKeystoreJson: 'Keystore JSON',
+  keyTypeXprv: 'Extended Private Key (xprv)',
+  keyTypeSolana: 'Private Key (Solana)',
   keyTypePgp: 'PGP Key',
   keyTypeApiKey: 'API Key',
   keyTypeOther: 'Other',
+  secretPlaceholderSeedPhrase: '12 or 24 words separated by spaces',
+  secretPlaceholderPrivateKeyHex: '0x... or 64 hex characters',
+  secretPlaceholderWif: 'Starts with 5, K, or L',
+  secretPlaceholderKeystoreJson: 'Paste the full JSON keystore content',
+  secretPlaceholderXprv: 'Starts with xprv...',
+  secretPlaceholderSolana: 'Base58-encoded private key',
 
   connectErrorPrefix: 'Could not connect to the vault: ',
 
@@ -437,10 +463,23 @@ const vi: Translations = {
   vaultRelocateWarning: 'Bạn sẽ cần mở khóa lại sau khi thực hiện.',
 
   keyTypeSsh: 'SSH Key',
-  keyTypeCryptoWallet: 'Ví Crypto',
+  keyTypeCryptoWallet: 'Ví Crypto (Khác)',
+  cryptoWalletGroupLabel: 'Ví Crypto',
+  keyTypeSeedPhrase: 'Seed Phrase (Cụm từ khôi phục)',
+  keyTypePrivateKeyHex: 'Private Key (Hex, EVM)',
+  keyTypeWif: 'Private Key (WIF, Bitcoin)',
+  keyTypeKeystoreJson: 'Keystore JSON',
+  keyTypeXprv: 'Extended Private Key (xprv)',
+  keyTypeSolana: 'Private Key (Solana)',
   keyTypePgp: 'PGP Key',
   keyTypeApiKey: 'API Key',
   keyTypeOther: 'Khác',
+  secretPlaceholderSeedPhrase: '12 hoặc 24 từ, cách nhau bởi dấu cách',
+  secretPlaceholderPrivateKeyHex: '0x... hoặc chuỗi hex 64 ký tự',
+  secretPlaceholderWif: 'Bắt đầu bằng 5, K, hoặc L',
+  secretPlaceholderKeystoreJson: 'Dán toàn bộ nội dung JSON keystore',
+  secretPlaceholderXprv: 'Bắt đầu bằng xprv...',
+  secretPlaceholderSolana: 'Private key dạng base58',
 
   connectErrorPrefix: 'Không thể kết nối tới két lưu trữ: ',
 
@@ -473,10 +512,30 @@ export function getKeyTypeLabels(t: Translations) {
   return {
     ssh: t.keyTypeSsh,
     crypto_wallet: t.keyTypeCryptoWallet,
+    crypto_seed_phrase: t.keyTypeSeedPhrase,
+    crypto_private_key_hex: t.keyTypePrivateKeyHex,
+    crypto_wif: t.keyTypeWif,
+    crypto_keystore_json: t.keyTypeKeystoreJson,
+    crypto_xprv: t.keyTypeXprv,
+    crypto_solana: t.keyTypeSolana,
     pgp: t.keyTypePgp,
     api_key: t.keyTypeApiKey,
     other: t.keyTypeOther,
   } as const;
+}
+
+/// Placeholder gợi ý đúng định dạng cần dán, tùy theo loại key đang chọn
+/// trong AddKeyModal — giúp người dùng biết cần copy gì từ ví/tool nguồn.
+export function getSecretPlaceholder(t: Translations, keyType: string): string {
+  const map: Record<string, string> = {
+    crypto_seed_phrase: t.secretPlaceholderSeedPhrase,
+    crypto_private_key_hex: t.secretPlaceholderPrivateKeyHex,
+    crypto_wif: t.secretPlaceholderWif,
+    crypto_keystore_json: t.secretPlaceholderKeystoreJson,
+    crypto_xprv: t.secretPlaceholderXprv,
+    crypto_solana: t.secretPlaceholderSolana,
+  };
+  return map[keyType] ?? t.secretPlaceholder;
 }
 
 /// Dịch mã lỗi trả về từ backend Rust (VD "ERR_INVALID_PASSWORD") sang
