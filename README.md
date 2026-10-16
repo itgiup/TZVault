@@ -159,7 +159,8 @@ This can be changed from Settings — see the section below.
 | **Export** | Settings (unlocked) | Uses `VACUUM INTO` to create a standalone, consistent SQLite file wherever you choose — take it anywhere and it just works |
 | **Import** | Setup screen (no vault set up yet) | Copies the chosen file into the app's default location — safe because there's nothing to lose on a fresh machine |
 | **Move** | Settings (unlocked) | Copies the current vault to a new location (e.g. a Dropbox/Google Drive folder) and switches to using it |
-| **Link** | Settings **or** right from the Unlock screen | Points directly at an existing vault file elsewhere — **no copying** |
+| **Link** | Settings, the Unlock screen, **or** the Setup screen | Points directly at an existing vault file elsewhere — **no copying** |
+| **Create** | Unlock screen | Creates a brand-new, empty vault file at a location you choose, then walks you through setting its master password. Never overwrites: refuses any path that already holds data |
 
 Move/Link choices are persisted in `app_config.json` (next to `vault.db`, **unencrypted** since it only holds a file path, not sensitive data) — the app remembers the right location on next launch.
 
@@ -181,7 +182,7 @@ Move/Link choices are persisted in `app_config.json` (next to `vault.db`, **unen
 | `cmd_export_vault(dest_path)` | Export to a file |
 | `cmd_import_vault(src_path)` | Import (only when no vault exists yet) |
 | `cmd_get_db_path()` | Get the currently active vault path |
-| `cmd_set_db_path(new_path, mode)` | Move/Link to a different vault (`mode`: `"move"` \| `"link"`) |
+| `cmd_set_db_path(new_path, mode)` | Move/Link/Create a vault (`mode`: `"move"` \| `"link"` \| `"create"`) |
 
 **Key management** (`commands/keys.rs`)
 | Command | Description |

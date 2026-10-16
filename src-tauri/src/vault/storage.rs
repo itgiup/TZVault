@@ -73,11 +73,15 @@ impl Storage {
     /// Đóng kết nối hiện tại và mở kết nối MỚI tới `new_path` — khác
     /// `reload()` ở chỗ đường dẫn thực sự thay đổi, dùng khi người dùng
     /// chọn "di chuyển" hoặc "liên kết" tới 1 file vault khác.
+    ///
+    /// Chỉ hoán đổi khi file mới mở + khởi tạo schema THÀNH CÔNG: nếu file
+    /// được chọn không phải SQLite hợp lệ (hoặc init_schema lỗi), `self`
+    /// giữ nguyên kết nối + đường dẫn cũ, không bị "kẹt" ở file hỏng.
     pub fn switch_path(&mut self, new_path: &str) -> Result<(), String> {
         let conn = Connection::open(new_path).map_err(|e| crate::error::internal_error("db_reopen", e))?;
-        self.conn = conn;
-        self.db_path = new_path.to_string();
-        self.init_schema()?;
+        let candidate = Storage { conn, db_path: new_path.to_string() };
+        candidate.init_schema()?;
+        *self = candidate;
         Ok(())
     }
 
@@ -492,6 +496,44 @@ mod tests {
 
         let fetched = storage.get_key_row("key-1").unwrap();
         assert_eq!(fetched.ciphertext, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn switch_path_failure_leaves_storage_untouched() {
+        let dir = std::env::temp_dir().join(format!("vault_test_switch_fail_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = dir.join("good.db");
+        let bad = dir.join("not_a_db.db");
+        std::fs::write(&bad, "day khong phai la file sqlite, chi la text bat ky ".repeat(10)).unwrap();
+
+        let mut storage = Storage::open(good.to_str().unwrap()).unwrap();
+        storage.insert_key(&sample_row("key-1")).unwrap();
+
+        let result = storage.switch_path(bad.to_str().unwrap());
+        assert!(result.is_err(), "switch sang file không phải SQLite phải báo lỗi");
+
+        // Storage phải giữ nguyên trỏ vào file cũ, vẫn dùng được bình thường
+        assert_eq!(storage.db_path(), good.to_str().unwrap());
+        assert!(storage.get_key_row("key-1").is_ok());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn switch_path_to_new_file_creates_empty_vault() {
+        let dir = std::env::temp_dir().join(format!("vault_test_switch_new_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let new_file = dir.join("brand_new.db");
+        assert!(!new_file.exists());
+
+        let mut storage = Storage::open_in_memory().unwrap();
+        storage.switch_path(new_file.to_str().unwrap()).unwrap();
+
+        assert!(new_file.exists(), "file mới phải được tạo trên đĩa");
+        assert_eq!(storage.db_path(), new_file.to_str().unwrap());
+        assert!(!storage.has_vault().unwrap(), "file mới chưa có vault -> frontend sẽ chuyển sang Setup");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

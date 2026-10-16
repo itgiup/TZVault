@@ -156,7 +156,8 @@ Có thể đổi sang vị trí khác qua Settings → xem mục dưới.
 | **Export** | Settings (đã unlock) | `VACUUM INTO` tạo 1 file SQLite độc lập, nhất quán tại nơi bạn chọn — mang đi đâu cũng dùng lại được |
 | **Import** | Màn hình Setup (máy chưa có vault) | Copy file đã chọn vào vị trí mặc định của app — an toàn vì máy vốn chưa có gì để mất |
 | **Move** | Settings (đã unlock) | Copy vault hiện tại sang vị trí mới (VD thư mục Dropbox/Google Drive), từ đó dùng vị trí mới |
-| **Link** | Settings **hoặc** ngay màn hình Unlock | Trỏ thẳng tới 1 file vault đã có sẵn ở nơi khác, **không copy** |
+| **Link** | Settings, màn hình Unlock, **hoặc** màn hình Setup | Trỏ thẳng tới 1 file vault đã có sẵn ở nơi khác, **không copy** |
+| **Create** | Màn hình Unlock | Tạo 1 file vault mới, rỗng ở vị trí bạn chọn, rồi dẫn qua bước đặt master password cho vault đó. Không bao giờ ghi đè: từ chối mọi đường dẫn đã có dữ liệu |
 
 Lựa chọn vị trí (Move/Link) được lưu vào `app_config.json` (cạnh `vault.db`, **không mã hóa** vì chỉ chứa đường dẫn, không phải dữ liệu nhạy cảm) — mở app lần sau tự nhớ đúng vị trí.
 
@@ -178,7 +179,7 @@ Lựa chọn vị trí (Move/Link) được lưu vào `app_config.json` (cạnh 
 | `cmd_export_vault(dest_path)` | Export ra file |
 | `cmd_import_vault(src_path)` | Import (chỉ khi chưa có vault) |
 | `cmd_get_db_path()` | Lấy đường dẫn vault đang dùng |
-| `cmd_set_db_path(new_path, mode)` | Move/Link sang vault khác (`mode`: `"move"` \| `"link"`) |
+| `cmd_set_db_path(new_path, mode)` | Move/Link/Create vault (`mode`: `"move"` \| `"link"` \| `"create"`) |
 
 **Quản lý key** (`commands/keys.rs`)
 | Command | Mô tả |

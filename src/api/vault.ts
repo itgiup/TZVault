@@ -113,7 +113,7 @@ export async function getDbPath(): Promise<string> {
   return invoke('cmd_get_db_path');
 }
 
-export async function setDbPath(newPath: string, mode: 'move' | 'link'): Promise<void> {
+export async function setDbPath(newPath: string, mode: 'move' | 'link' | 'create'): Promise<void> {
   return invoke('cmd_set_db_path', { newPath, mode });
 }
 
@@ -122,6 +122,17 @@ export async function pickMoveDestination(dialogTitle: string, filterName: strin
   const path = await save({
     title: dialogTitle,
     defaultPath: 'vault.db',
+    filters: [{ name: filterName, extensions: ['db'] }],
+  });
+  return path ?? null;
+}
+
+/// Dialog "Save" để chọn nơi TẠO 1 file vault MỚI (rỗng). Backend từ chối
+/// nếu file đã tồn tại và không rỗng (không bao giờ ghi đè).
+export async function pickCreateDestination(dialogTitle: string, filterName: string): Promise<string | null> {
+  const path = await save({
+    title: dialogTitle,
+    defaultPath: 'new-vault.db',
     filters: [{ name: filterName, extensions: ['db'] }],
   });
   return path ?? null;

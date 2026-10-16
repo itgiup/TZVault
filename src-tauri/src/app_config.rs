@@ -22,7 +22,7 @@ fn config_file_path(app_data_dir: &Path) -> PathBuf {
 
 pub fn load_app_config(app_data_dir: &Path) -> AppConfig {
     let path = config_file_path(app_data_dir);
-    std::fs::read_to_string(&path)
+    std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
@@ -32,7 +32,7 @@ pub fn save_app_config(app_data_dir: &Path, config: &AppConfig) -> Result<(), St
     let path = config_file_path(app_data_dir);
     let json = serde_json::to_string_pretty(config)
         .map_err(|e| crate::error::internal_error("encode_app_config", e))?;
-    std::fs::write(&path, json).map_err(|e| crate::error::internal_error("write_app_config", e))?;
+    std::fs::write(path, json).map_err(|e| crate::error::internal_error("write_app_config", e))?;
     Ok(())
 }
 

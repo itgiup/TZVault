@@ -1,19 +1,21 @@
 // src/components/UnlockScreen.tsx
 
 import { useEffect, useState } from 'react';
-import { unlockVault, getDbPath, setDbPath, pickLinkSource } from '../api/vault';
+import { unlockVault, getDbPath, setDbPath, pickLinkSource, pickCreateDestination } from '../api/vault';
 import { translateError } from '../i18n/translations';
 import { useI18n } from '../i18n/LanguageContext';
 import { Dial } from './Dial';
 
 interface UnlockScreenProps {
   onUnlocked: () => void;
+  /** Gọi sau khi tạo file vault MỚI (rỗng) -> App chuyển sang màn hình Setup. */
+  onNeedsSetup: () => void;
 }
 
 // Tăng dần độ trễ sau mỗi lần sai — giảm tốc độ brute-force cục bộ.
 const DELAY_STEPS_MS = [0, 500, 1000, 2000, 4000];
 
-export function UnlockScreen({ onUnlocked }: UnlockScreenProps) {
+export function UnlockScreen({ onUnlocked, onNeedsSetup }: UnlockScreenProps) {
   const { t } = useI18n();
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -21,7 +23,7 @@ export function UnlockScreen({ onUnlocked }: UnlockScreenProps) {
   const [failCount, setFailCount] = useState(0);
 
   const [currentDbPath, setCurrentDbPath] = useState<string | null>(null);
-  const [switchingDb, setSwitchingDb] = useState(false);
+  const [switchingDb, setSwitchingDb] = useState<'link' | 'create' | null>(null);
   const [switchErrorCode, setSwitchErrorCode] = useState<unknown>(null);
 
   useEffect(() => {
@@ -58,7 +60,7 @@ export function UnlockScreen({ onUnlocked }: UnlockScreenProps) {
     const srcPath = await pickLinkSource(t.linkDialogTitle, t.vaultFileFilterName);
     if (!srcPath) return; // bấm Cancel trên dialog
 
-    setSwitchingDb(true);
+    setSwitchingDb('link');
     try {
       await setDbPath(srcPath, 'link');
       setCurrentDbPath(srcPath);
@@ -68,7 +70,22 @@ export function UnlockScreen({ onUnlocked }: UnlockScreenProps) {
     } catch (err) {
       setSwitchErrorCode(err);
     } finally {
-      setSwitchingDb(false);
+      setSwitchingDb(null);
+    }
+  }
+
+  async function handleCreateDb() {
+    setSwitchErrorCode(null);
+    const destPath = await pickCreateDestination(t.createVaultFileDialogTitle, t.vaultFileFilterName);
+    if (!destPath) return; // bấm Cancel trên dialog
+
+    setSwitchingDb('create');
+    try {
+      await setDbPath(destPath, 'create');
+      onNeedsSetup(); // file mới chưa có vault -> sang màn hình Setup
+    } catch (err) {
+      setSwitchErrorCode(err);
+      setSwitchingDb(null);
     }
   }
 
@@ -115,10 +132,19 @@ export function UnlockScreen({ onUnlocked }: UnlockScreenProps) {
         <button
           className="btn btn-secondary"
           onClick={handleSwitchDb}
-          disabled={switchingDb}
+          disabled={switchingDb !== null}
           style={{ width: '100%' }}
         >
-          {switchingDb ? t.linkingVaultBtn : t.linkVaultBtn}
+          {switchingDb === 'link' ? t.linkingVaultBtn : t.linkVaultBtn}
+        </button>
+
+        <button
+          className="btn btn-secondary"
+          onClick={handleCreateDb}
+          disabled={switchingDb !== null}
+          style={{ width: '100%' }}
+        >
+          {switchingDb === 'create' ? t.creatingVaultFileBtn : t.createVaultFileBtn}
         </button>
 
         {switchError && <p className="error-text">{switchError}</p>}

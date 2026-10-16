@@ -1,7 +1,7 @@
 // src/components/SetupScreen.tsx
 
-import { useState } from 'react';
-import { setupVault, pickImportSource, importVault } from '../api/vault';
+import { useEffect, useState } from 'react';
+import { setupVault, pickImportSource, importVault, getDbPath, setDbPath, pickLinkSource } from '../api/vault';
 import { translateError } from '../i18n/translations';
 import { useI18n } from '../i18n/LanguageContext';
 import { Dial } from './Dial';
@@ -23,6 +23,16 @@ export function SetupScreen({ onSetupComplete, onImportComplete }: SetupScreenPr
 
   const [importing, setImporting] = useState(false);
   const [importErrorCode, setImportErrorCode] = useState<unknown>(null);
+
+  const [currentDbPath, setCurrentDbPath] = useState<string | null>(null);
+  const [linking, setLinking] = useState(false);
+  const [linkErrorCode, setLinkErrorCode] = useState<unknown>(null);
+
+  useEffect(() => {
+    getDbPath()
+      .then(setCurrentDbPath)
+      .catch(() => setCurrentDbPath(null));
+  }, []);
 
   const tooShort = password.length > 0 && password.length < MIN_LENGTH;
   const mismatch = confirm.length > 0 && password !== confirm;
@@ -60,17 +70,40 @@ export function SetupScreen({ onSetupComplete, onImportComplete }: SetupScreenPr
     }
   }
 
+  // Lối thoát: nếu vừa tạo file vault mới nhầm chỗ (hoặc muốn dùng 1 vault
+  // đã có), trỏ sang file khác — vault đã tồn tại nên đi thẳng sang Unlock.
+  async function handleLink() {
+    setLinkErrorCode(null);
+    const srcPath = await pickLinkSource(t.linkDialogTitle, t.vaultFileFilterName);
+    if (!srcPath) return;
+
+    setLinking(true);
+    try {
+      await setDbPath(srcPath, 'link');
+      onImportComplete();
+    } catch (err) {
+      setLinkErrorCode(err);
+      setLinking(false);
+    }
+  }
+
   const error = errorCode ? translateError(errorCode, t) : null;
+  const linkError = linkErrorCode ? translateError(linkErrorCode, t) : null;
   const importError = importErrorCode ? translateError(importErrorCode, t) : null;
 
   return (
     <div className="auth-screen">
       <div className="auth-card">
-        <Dial spinning={submitting || importing} />
+        <Dial spinning={submitting || importing || linking} />
 
         <div>
           <h1 className="auth-title">{t.setupTitle}</h1>
           <p className="auth-subtitle">{t.setupSubtitle}</p>
+          {currentDbPath && (
+            <p className="hint-text" style={{ textAlign: 'center', marginTop: 10, wordBreak: 'break-all' }}>
+              {t.setupLocationLabel} {currentDbPath}
+            </p>
+          )}
         </div>
 
         <form className="auth-form" onSubmit={handleSubmit}>
@@ -133,10 +166,25 @@ export function SetupScreen({ onSetupComplete, onImportComplete }: SetupScreenPr
           <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
         </div>
 
-        <button className="btn btn-secondary" onClick={handleImport} disabled={importing} style={{ width: '100%' }}>
+        <button
+          className="btn btn-secondary"
+          onClick={handleImport}
+          disabled={importing || linking}
+          style={{ width: '100%' }}
+        >
           {importing ? t.importingVaultBtn : t.importVaultBtn}
         </button>
         {importError && <p className="error-text">{importError}</p>}
+
+        <button
+          className="btn btn-secondary"
+          onClick={handleLink}
+          disabled={importing || linking}
+          style={{ width: '100%' }}
+        >
+          {linking ? t.linkingVaultBtn : t.linkVaultBtn}
+        </button>
+        {linkError && <p className="error-text">{linkError}</p>}
       </div>
     </div>
   );

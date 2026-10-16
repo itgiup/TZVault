@@ -136,6 +136,10 @@ export interface Translations {
   moveDialogTitle: string;
   linkDialogTitle: string;
   vaultRelocateWarning: string;
+  createVaultFileBtn: string;
+  creatingVaultFileBtn: string;
+  createVaultFileDialogTitle: string;
+  setupLocationLabel: string;
 
   // Key types
   keyTypeSsh: string;
@@ -175,6 +179,7 @@ export interface Translations {
   errorInvalidKeyPassword: string;
   errorKeyAlreadyProtected: string;
   errorInvalidVaultFile: string;
+  errorFileAlreadyExists: string;
 }
 
 const en: Translations = {
@@ -300,6 +305,10 @@ const en: Translations = {
   moveDialogTitle: 'Choose new location for vault',
   linkDialogTitle: 'Select an existing vault file',
   vaultRelocateWarning: "You'll need to unlock again after this.",
+  createVaultFileBtn: 'Create a new vault file...',
+  creatingVaultFileBtn: 'Creating...',
+  createVaultFileDialogTitle: 'Choose where to create the new vault',
+  setupLocationLabel: 'This vault will be stored at:',
 
   keyTypeSsh: 'SSH Key',
   keyTypeCryptoWallet: 'Crypto Wallet (Other)',
@@ -336,6 +345,7 @@ const en: Translations = {
   errorInvalidKeyPassword: 'Incorrect key password',
   errorKeyAlreadyProtected: 'This key already has an extra password',
   errorInvalidVaultFile: "This doesn't look like a valid vault file",
+  errorFileAlreadyExists: 'A file already exists there. Pick a new file name, or use "Use a different vault file" to open it.',
 };
 
 const vi: Translations = {
@@ -461,6 +471,10 @@ const vi: Translations = {
   moveDialogTitle: 'Chọn vị trí mới cho vault',
   linkDialogTitle: 'Chọn file vault đã có sẵn',
   vaultRelocateWarning: 'Bạn sẽ cần mở khóa lại sau khi thực hiện.',
+  createVaultFileBtn: 'Tạo file vault mới...',
+  creatingVaultFileBtn: 'Đang tạo...',
+  createVaultFileDialogTitle: 'Chọn nơi tạo vault mới',
+  setupLocationLabel: 'Vault này sẽ được lưu tại:',
 
   keyTypeSsh: 'SSH Key',
   keyTypeCryptoWallet: 'Ví Crypto (Khác)',
@@ -497,6 +511,7 @@ const vi: Translations = {
   errorInvalidKeyPassword: 'Mật khẩu riêng không đúng',
   errorKeyAlreadyProtected: 'Key này đã có mật khẩu riêng rồi',
   errorInvalidVaultFile: 'File này không phải file vault hợp lệ',
+  errorFileAlreadyExists: 'Đã có file ở vị trí đó. Hãy chọn tên file mới, hoặc dùng "Dùng 1 file vault khác" để mở nó.',
 };
 
 export type Language = 'en' | 'vi';
@@ -563,6 +578,7 @@ export function translateError(err: unknown, t: Translations): string {
     ERR_INVALID_KEY_PASSWORD: t.errorInvalidKeyPassword,
     ERR_KEY_ALREADY_PROTECTED: t.errorKeyAlreadyProtected,
     ERR_INVALID_VAULT_FILE: t.errorInvalidVaultFile,
+    ERR_FILE_ALREADY_EXISTS: t.errorFileAlreadyExists,
   };
 
   if (raw in knownErrors) return knownErrors[raw];

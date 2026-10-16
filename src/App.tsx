@@ -92,7 +92,10 @@ function AppInner() {
     return (
       <div className="vault-app">
         {floatingControls}
-        <UnlockScreen onUnlocked={() => setState(APP_STATES.unlocked)} />
+        <UnlockScreen
+          onUnlocked={() => setState(APP_STATES.unlocked)}
+          onNeedsSetup={() => setState(APP_STATES.needs_setup)}
+        />
       </div>
     );
   }

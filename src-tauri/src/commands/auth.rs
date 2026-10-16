@@ -193,7 +193,7 @@ pub fn cmd_import_vault(
 
     let dest_path = db.db_path().to_string();
 
-    std::fs::copy(&src_path, &dest_path)
+    std::fs::copy(src_path, dest_path)
         .map_err(|e| crate::error::internal_error("import_copy_file", e))?;
 
     // Bắt buộc mở lại connection — connection cũ không tự thấy file vừa
@@ -220,13 +220,17 @@ pub fn cmd_get_db_path(storage: State<StorageState>) -> Result<String, String> {
     Ok(db.db_path().to_string())
 }
 
-/// Đổi vault đang dùng sang 1 vị trí khác. 2 chế độ:
-/// - "move": copy vault HIỆN TẠI sang `new_path` rồi dùng vị trí đó từ giờ
-///           (file cũ ở vị trí cũ vẫn còn nguyên, không tự xóa).
-/// - "link": KHÔNG copy gì cả — chỉ trỏ thẳng tới 1 file vault đã có sẵn
-///           tại `new_path` (VD file đang nằm trong thư mục đồng bộ).
+/// Đổi vault đang dùng sang 1 vị trí khác. 3 chế độ:
+/// - "move":   copy vault HIỆN TẠI sang `new_path` rồi dùng vị trí đó từ giờ
+///             (file cũ ở vị trí cũ vẫn còn nguyên, không tự xóa).
+/// - "link":   KHÔNG copy gì cả — chỉ trỏ thẳng tới 1 file vault đã có sẵn
+///             tại `new_path` (VD file đang nằm trong thư mục đồng bộ).
+/// - "create": tạo vault MỚI (rỗng) tại `new_path`. Frontend sau đó chuyển
+///             sang màn hình Setup để đặt master password cho vault này.
+///             KHÔNG BAO GIỜ ghi đè: chỉ chấp nhận đường dẫn chưa tồn tại
+///             hoặc file rỗng (0 byte), tránh vô tình phá 1 vault khác.
 ///
-/// Cả 2 chế độ đều lưu lựa chọn vào app_config.json để lần mở app sau tự
+/// Cả 3 chế độ đều lưu lựa chọn vào app_config.json để lần mở app sau tự
 /// nhớ đúng vị trí này, và đều khóa lại vault (bắt buộc unlock lại bằng
 /// master password của vault MỚI — có thể khác với vault cũ).
 #[tauri::command]
@@ -255,6 +259,14 @@ pub fn cmd_set_db_path(
                 db.switch_path(&old_path)?;
                 return Err("ERR_INVALID_VAULT_FILE".to_string());
             }
+        }
+        "create" => {
+            if let Ok(meta) = std::fs::metadata(&new_path) {
+                if meta.len() > 0 {
+                    return Err("ERR_FILE_ALREADY_EXISTS".to_string());
+                }
+            }
+            db.switch_path(&new_path)?;
         }
         _ => return Err(crate::error::internal_error_msg("invalid_set_db_path_mode")),
     }
